@@ -1,0 +1,3088 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Dynasty Central</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-storage-compat.js"></script>
+    
+    <!-- reCAPTCHA Script -->
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+    <script src="config.js"></script>
+    <script src="api.js"></script>
+    <script src="api-example.js"></script> <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* bg-gray-900 */
+        }
+        /* Simple modal animation */
+        .modal-enter {
+            opacity: 0;
+            transform: scale(0.9);
+        }
+        .modal-enter-active {
+            opacity: 1;
+            transform: translateX(0);
+            transition: opacity 300ms, transform 300ms;
+        }
+        /* Styling for the file input button */
+        .avatar-upload-btn {
+            cursor: pointer;
+            position: absolute;
+            bottom: 0;
+            right: -5px;
+            background-color: rgba(30, 41, 59, 0.8); /* bg-slate-800 with opacity */
+            color: white;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #4a5568; /* border-gray-600 */
+            transition: background-color 0.2s;
+        }
+        .avatar-upload-btn:hover {
+            background-color: #0ea5e9; /* hover:bg-sky-500 */
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // =====================================================================================
+        // === FIREBASE CONFIGURATION =========================================================
+        // =====================================================================================
+        // Configuration is loaded from config.js to keep sensitive data separate
+        const firebaseConfig = window.FIREBASE_CONFIG;
+        const appId = window.APP_ID;
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+
+        // Destructure React hooks for easier use
+        const { useState, useEffect, createContext, useContext, useRef, useMemo } = React;
+
+        // =====================================================================================
+        // === START OF REACT APPLICATION CODE =================================================
+        // =====================================================================================
+
+        const FirebaseContext = createContext(null);
+
+        const FirebaseProvider = ({ children }) => {
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [storage, setStorage] = useState(null); // Added storage state
+            const [userId, setUserId] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [userDisplayName, setUserDisplayName] = useState(null);
+            const [userAvatarUrl, setUserAvatarUrl] = useState(null); // Added user avatar state
+
+            useEffect(() => {
+                const firestoreDb = firebase.firestore();
+                const firebaseAuth = firebase.auth();
+                const firebaseStorage = firebase.storage(); // Initialize storage
+                setDb(firestoreDb);
+                setAuth(firebaseAuth);
+                setStorage(firebaseStorage); // Set storage
+
+                const unsubscribe = firebaseAuth.onAuthStateChanged(async (user) => {
+                    if (user) {
+                        setUserId(user.uid);
+                        const userProfileDocRef = firestoreDb.doc(`artifacts/${appId}/users/${user.uid}/userProfile/settings`);
+                        const docSnap = await userProfileDocRef.get();
+                        if (docSnap.exists) {
+                            const data = docSnap.data();
+                            setUserDisplayName(data.username || user.email || user.uid.substring(0, 6));
+                            setUserAvatarUrl(data.avatarUrl || null); // Fetch avatar URL
+                        } else {
+                            setUserDisplayName(user.email || user.uid.substring(0, 6));
+                            setUserAvatarUrl(null);
+                        }
+                    } else {
+                        setUserId(null);
+                        setUserDisplayName(null);
+                        setUserAvatarUrl(null);
+                    }
+                    setIsAuthReady(true);
+                });
+
+                return () => unsubscribe();
+            }, []);
+
+            return (
+                <FirebaseContext.Provider value={{ db, auth, storage, userId, isAuthReady, userDisplayName, userAvatarUrl }}>
+                    {children}
+                </FirebaseContext.Provider>
+            );
+        };
+
+        const useFirebase = () => useContext(FirebaseContext);
+
+        // --- START: NEW AVATAR COMPONENT ---
+        const Avatar = ({ docRefPath, storagePath, currentAvatarUrl, showMessage, size = "h-16 w-16" }) => {
+            const { db, storage } = useFirebase();
+            const [isUploading, setIsUploading] = useState(false);
+            const fileInputRef = useRef(null);
+
+            const handleFileSelect = () => {
+                fileInputRef.current.click();
+            };
+
+            const handleImageUpload = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                if (!file.type.startsWith("image/")) {
+                    return showMessage("Please select an image file.", "error");
+                }
+                
+                setIsUploading(true);
+                const uniqueFileName = `${Date.now()}-${file.name}`;
+                const imageRef = storage.ref(`${storagePath}/${uniqueFileName}`);
+
+                try {
+                    const snapshot = await imageRef.put(file);
+                    const downloadURL = await snapshot.ref.getDownloadURL();
+                    
+                    const docRef = db.doc(docRefPath);
+                    await docRef.update({ avatarUrl: downloadURL });
+                    
+                    showMessage("Avatar updated successfully!", "success");
+                } catch (error) {
+                    console.error("Error uploading image:", error);
+                    showMessage("Failed to upload avatar.", "error");
+                } finally {
+                    setIsUploading(false);
+                    if(fileInputRef.current) {
+                        fileInputRef.current.value = "";
+                    }
+                }
+            };
+            
+            const defaultAvatar = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg==";
+
+
+            return (
+                <div className={`relative ${size} flex-shrink-0`}>
+                    <img
+                        src={currentAvatarUrl || defaultAvatar}
+                        alt="Avatar"
+                        className="rounded-full h-full w-full object-cover border-2 border-gray-600"
+                    />
+                    {isUploading ? (
+                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-full">
+                            <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white"></div>
+                        </div>
+                    ) : (
+                        <>
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                onChange={handleImageUpload}
+                                accept="image/*"
+                                className="hidden"
+                            />
+                            <button onClick={handleFileSelect} title="Change Avatar" className="avatar-upload-btn">
+                                ✏️
+                            </button>
+                        </>
+                    )}
+                </div>
+            );
+        };
+        // --- END: NEW AVATAR COMPONENT ---
+
+        const mockPlayers = [
+            { id: 'p1', name: 'Patrick Mahomes', position: 'QB', nflTeam: 'KC', salary: 50 }, { id: 'p2', name: 'Christian McCaffrey', position: 'RB', nflTeam: 'SF', salary: 55 }, { id: 'p3', name: 'Justin Jefferson', position: 'WR', nflTeam: 'MIN', salary: 52 }, { id: 'p4', name: 'Travis Kelce', position: 'TE', nflTeam: 'KC', salary: 48 }, { id: 'p5', name: 'Myles Garrett', position: 'DL', nflTeam: 'CLE', salary: 30 }, { id: 'p6', name: 'Fred Warner', position: 'LB', nflTeam: 'SF', salary: 28 }, { id: 'p7', name: 'Derwin James', position: 'DB', nflTeam: 'LAC', salary: 25 }, { id: 'p8', name: 'Justin Tucker', position: 'K', nflTeam: 'BAL', salary: 15 }, { id: 'p9', name: 'Josh Allen', position: 'QB', nflTeam: 'BUF', salary: 49 }, { id: 'p10', name: 'Bijan Robinson', position: 'RB', nflTeam: 'ATL', salary: 45 }, { id: 'p11', name: 'Ja\'Marr Chase', position: 'WR', nflTeam: 'CIN', salary: 51 }, { id: 'p12', name: 'T.J. Hockenson', position: 'TE', nflTeam: 'MIN', salary: 35 }, { id: 'p13', name: 'Nick Bosa', position: 'DL', nflTeam: 'SF', salary: 32 }, { id: 'p14', name: 'Roquan Smith', position: 'LB', nflTeam: 'BAL', salary: 29 }, { id: 'p15', name: 'Patrick Surtain II', position: 'DB', nflTeam: 'DEN', salary: 26 }, { id: 'p16', name: 'Tyler Bass', position: 'K', nflTeam: 'BUF', salary: 12 }, { id: 'p17', name: 'Saquon Barkley', position: 'RB', nflTeam: 'PHI', salary: 40 }, { id: 'p18', name: 'CeeDee Lamb', position: 'WR', nflTeam: 'DAL', salary: 48 }, { id: 'p19', name: 'Amon-Ra St. Brown', position: 'WR', nflTeam: 'DET', salary: 47 }, { id: 'p20', name: 'Mark Andrews', position: 'TE', nflTeam: 'BAL', salary: 42 }, { id: 'p21', name: 'Micah Parsons', position: 'LB', nflTeam: 'DAL', salary: 33 }, { id: 'p22', name: 'Jalen Hurts', position: 'QB', nflTeam: 'PHI', salary: 47 }, { id: 'p23', name: 'Austin Ekeler', position: 'RB', nflTeam: 'WAS', salary: 38 }, { id: 'p24', name: 'Cooper Kupp', position: 'WR', nflTeam: 'LAR', salary: 44 }, { id: 'p25', name: 'George Kittle', position: 'TE', nflTeam: 'SF', salary: 40 }, { id: 'p26', name: 'Aaron Donald', position: 'DL', nflTeam: 'LAR', salary: 35 }, { id: 'p27', name: 'Bobby Wagner', position: 'LB', nflTeam: 'WAS', salary: 22 }, { id: 'p28', name: 'Minkah Fitzpatrick', position: 'DB', nflTeam: 'PIT', salary: 27 }, { id: 'p29', name: 'Daniel Carlson', position: 'K', nflTeam: 'LV', salary: 14 }, { id: 'p30', name: 'Derrick Henry', position: 'RB', nflTeam: 'BAL', salary: 39 }, { id: 'p31', name: 'Stefon Diggs', position: 'WR', nflTeam: 'HOU', salary: 46 }, { id: 'p32', name: 'Davante Adams', position: 'WR', nflTeam: 'LV', salary: 45 }, { id: 'p33', name: 'Darren Waller', position: 'TE', nflTeam: 'NYG', salary: 33 }, { id: 'p34', name: 'T.J. Watt', position: 'LB', nflTeam: 'PIT', salary: 34 }, { id: 'p35', name: 'Sauce Gardner', position: 'DB', nflTeam: 'NYJ', salary: 28 }, { id: 'p36', name: 'Dak Prescott', position: 'QB', nflTeam: 'DAL', salary: 45 }, { id: 'p37', name: 'Jonathan Taylor', position: 'RB', nflTeam: 'IND', salary: 42 }, { id: 'p38', name: 'Garrett Wilson', position: 'WR', nflTeam: 'NYJ', salary: 43 }, { id: 'p39', name: 'Puka Nacua', position: 'WR', nflTeam: 'LAR', salary: 30 }, { id: 'p40', name: 'Sam LaPorta', position: 'TE', nflTeam: 'DET', salary: 38 }, { id: 'p41', name: 'Maxx Crosby', position: 'DL', nflTeam: 'LV', salary: 31 }, { id: 'p42', name: 'C.J. Stroud', position: 'QB', nflTeam: 'HOU', salary: 40 }, { id: 'p43', name: 'Kyren Williams', position: 'RB', nflTeam: 'LAR', salary: 36 }, { id: 'p44', name: 'A.J. Brown', position: 'WR', nflTeam: 'PHI', salary: 49 }, { id: 'p46', name: 'Lamar Jackson', position: 'QB', nflTeam: 'BAL', salary: 48 }, { id: 'p47', name: 'Breece Hall', position: 'RB', nflTeam: 'NYJ', salary: 41 }, { id: 'p48', name: 'Tyreek Hill', position: 'WR', nflTeam: 'MIA', salary: 50 }, { id: 'p49', name: 'Joe Burrow', position: 'QB', nflTeam: 'CIN', salary: 48 }
+        ];
+
+        const DEFAULT_STARTING_SLOTS = { QB: 1, RB: 2, WR: 3, TE: 1, Flex: 2, DL: 2, LB: 2, DB: 2, DFlex: 1, K: 1 };
+        const INITIAL_ROSTER_LIMITS = { Bench: 14, IR: 3 };
+        
+        const LINEUP_DISPLAY_ORDER = [
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.QB }, (_, i) => `QB${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.RB }, (_, i) => `RB${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.WR }, (_, i) => `WR${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.TE }, (_, i) => `TE${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.Flex }, (_, i) => `Flex${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.DL }, (_, i) => `DL${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.LB }, (_, i) => `LB${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.DB }, (_, i) => `DB${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.DFlex }, (_, i) => `DFlex${i + 1}`),
+            ...Array.from({ length: DEFAULT_STARTING_SLOTS.K }, (_, i) => `K${i + 1}`),
+        ];
+
+        const STANDARD_SCORING_RULES = { passTd: 4, rushTd: 6, twoPointConversion: 2, completion: 0.5, passYard: 0.05, pass300YardBonus: 2, pass400YardBonus: 4, sack: -1, interception: -2, fumble: -2, recTd: 6, returnTd: 6, reception: 1, rushRecYard: 0.2, rushRec100YardBonus: 2, rushRec200YardBonus: 4, fumbleRecovery: 1, extraPoint: 1, fg39Less: 3, fg40_49: 4, fg50Plus: 5, missedFgEp: -1, tackle: 2, forcedFumble: 3, fumbleRecoveryDef: 4, interceptionDef: 4, returnYardDefSt: 0.2, passDefended: 0.5, defensiveStTd: 7, assistedTackle: 0.2, tackleForLoss: 1 };
+
+        const getPlayerDetails = (playerId, allPlayers) => allPlayers.find(p => p.id === playerId) || {};
+        
+        const getAvailablePlayers = (rosteredPlayers, allPlayers) => {
+            const allRosteredPlayerIds = new Set(rosteredPlayers);
+            return allPlayers.filter(player => !allRosteredPlayerIds.has(player.id));
+        };
+
+        const shuffleArray = (array) => {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex != 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        };
+
+        const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, children }) => {
+            if (!isOpen) return null;
+
+            return (
+                 <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 modal-enter-active">
+                    <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md border border-red-500">
+                        <h3 className="text-2xl font-bold mb-4 text-red-400">{title}</h3>
+                        <div className="text-gray-300 mb-6">{children}</div>
+                        <div className="flex justify-end gap-4">
+                            <button onClick={onClose} className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold">Cancel</button>
+                            <button onClick={onConfirm} className="px-6 py-2 bg-red-600 hover:bg-red-700 rounded-md font-semibold">Confirm</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        // --- START: COMMISSIONER TOOLS COMPONENT ---
+        const CommissionerTools = ({ currentLeague, db, showMessage, teamsData, onLeagueDeleted }) => {
+            const [leagueName, setLeagueName] = useState(currentLeague.name);
+            const [settings, setSettings] = useState({
+                numTeams: 12,
+                numWeeks: 14,
+                playoffWeeks: 3,
+                teamSalary: 1000,
+                playersToDrop: 5,
+                salaryRaisePercentage: 10,
+                minPlayerSalary: 0.5,
+                divisions: [],
+                rosterLimits: INITIAL_ROSTER_LIMITS, // Now just Bench/IR
+                scoringRules: STANDARD_SCORING_RULES,
+                ...currentLeague.settings
+            });
+            
+            const [isLoading, setIsLoading] = useState(false);
+            const [activeTab, setActiveTab] = useState('settings');
+            const [teamToDelete, setTeamToDelete] = useState(null);
+            const [showDeleteLeagueModal, setShowDeleteLeagueModal] = useState(false);
+            const [deleteConfirmText, setDeleteConfirmText] = useState('');
+            const [teamToPromote, setTeamToPromote] = useState(null);
+
+            const isOffSeason = currentLeague.auction?.status !== 'live';
+
+            const handleGeneralSettingChange = (key, value) => {
+                setSettings(prev => ({ ...prev, [key]: value }));
+            };
+
+            const handleNestedSettingChange = (category, key, value) => {
+                setSettings(prev => ({
+                    ...prev,
+                    [category]: {
+                        ...(prev[category] || {}),
+                        [key]: value
+                    }
+                }));
+            };
+            
+            const handleDivisionNameChange = (index, name) => {
+                const newDivisions = [...settings.divisions];
+                newDivisions[index] = name;
+                handleGeneralSettingChange('divisions', newDivisions);
+            };
+
+            const addDivision = () => {
+                if (settings.divisions.length < 4) {
+                    handleGeneralSettingChange('divisions', [...settings.divisions, `Division ${settings.divisions.length + 1}`]);
+                }
+            };
+
+            const removeDivision = (index) => {
+                if (settings.divisions.length > 0) { // Can remove until 0 are left
+                    handleGeneralSettingChange('divisions', settings.divisions.filter((_, i) => i !== index));
+                }
+            };
+
+            const handleUpdateSettings = async () => {
+                setIsLoading(true);
+                try {
+                    const updatedSettings = {
+                        ...settings,
+                        numTeams: Number(settings.numTeams),
+                        numWeeks: Number(settings.numWeeks),
+                        playoffWeeks: Number(settings.playoffWeeks),
+                        teamSalary: Number(settings.teamSalary),
+                        playersToDrop: Number(settings.playersToDrop),
+                        salaryRaisePercentage: Number(settings.salaryRaisePercentage),
+                        minPlayerSalary: Number(settings.minPlayerSalary),
+                    };
+                    
+                    const updatedData = {
+                        name: leagueName,
+                        settings: updatedSettings
+                    };
+                    
+                    const leagueRef = db.doc(`leagues/${currentLeague.id}`);
+                    await leagueRef.update(updatedData);
+                    
+                    showMessage("League settings updated successfully!", "success");
+                } catch (error) {
+                    console.error("Error updating settings:", error);
+                    showMessage("Failed to update settings.", "error");
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+            
+            const handleDeleteTeam = async () => {
+                if (!teamToDelete) return;
+                setIsLoading(true);
+
+                const batch = db.batch();
+                const leagueRef = db.doc(`leagues/${currentLeague.id}`);
+                const teamRef = db.doc(`artifacts/${appId}/public/data/teams/${teamToDelete.id}`);
+                const playersToRemove = Object.values(teamToDelete.roster).flat();
+
+                batch.update(leagueRef, {
+                    teams: firebase.firestore.FieldValue.arrayRemove(teamToDelete.id),
+                    allRosteredPlayerIds: firebase.firestore.FieldValue.arrayRemove(...playersToRemove)
+                });
+                batch.delete(teamRef);
+
+                try {
+                    const tradesQuery = await db.collection(`leagues/${currentLeague.id}/trades`)
+                                                .where('teamIds', 'array-contains', teamToDelete.id)
+                                                .get();
+                    tradesQuery.forEach(doc => batch.delete(doc.ref));
+                    await batch.commit();
+                    showMessage(`Team "${teamToDelete.teamName}" has been deleted.`, "success");
+                } catch (error) {
+                    console.error("Error deleting team:", error);
+                    showMessage("Failed to delete team.", "error");
+                } finally {
+                    setTeamToDelete(null);
+                    setIsLoading(false);
+                }
+            };
+            
+            const handleDeleteLeague = async () => {
+                if (deleteConfirmText !== currentLeague.name) {
+                    return showMessage("Confirmation text does not match league name.", "error");
+                }
+                setIsLoading(true);
+                showMessage("Deleting league and all associated data... This may take a moment.", "info");
+
+                try {
+                    const batch = db.batch();
+                    currentLeague.teams.forEach(teamId => {
+                        batch.delete(db.doc(`artifacts/${appId}/public/data/teams/${teamId}`));
+                    });
+                    const tradesSnapshot = await db.collection(`leagues/${currentLeague.id}/trades`).get();
+                    tradesSnapshot.forEach(doc => batch.delete(doc.ref));
+                    const waiversSnapshot = await db.collection(`leagues/${currentLeague.id}/waivers`).get();
+                    waiversSnapshot.forEach(doc => batch.delete(doc.ref));
+                    await batch.commit();
+                    await db.doc(`leagues/${currentLeague.id}`).delete();
+                    showMessage("League deleted successfully.", "success");
+                    onLeagueDeleted();
+                } catch (error) {
+                    console.error("Error deleting league:", error);
+                    showMessage("A critical error occurred during league deletion.", "error");
+                    setIsLoading(false);
+                }
+            };
+
+            const handlePromoteCommissioner = async (team) => {
+                if (!team || !team.ownerId) {
+                    return showMessage("Invalid team selected.", "error");
+                }
+                
+                setIsLoading(true);
+                try {
+                    const leagueRef = db.doc(`leagues/${currentLeague.id}`);
+                    await leagueRef.update({
+                        commissionerId: team.ownerId
+                    });
+                    
+                    showMessage(`${team.teamName} has been promoted to commissioner!`, "success");
+                    setTeamToPromote(null);
+                } catch (error) {
+                    console.error("Error promoting commissioner:", error);
+                    showMessage("Failed to promote commissioner.", "error");
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            if (!isOffSeason) {
+                return (
+                    <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                        <h2 className="text-3xl font-bold text-white mb-6 text-center">Commissioner Tools</h2>
+                        <div className="bg-yellow-900 border border-yellow-500 text-yellow-300 p-4 rounded-lg text-center">
+                            <p className="font-bold text-lg">Tools Locked</p>
+                            <p>Major league and team changes can only be made during the off-season (when the auction is not live).</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">Commissioner Tools</h2>
+                    <div className="flex border-b border-gray-600 mb-6">
+                        <button onClick={() => setActiveTab('settings')} className={`px-4 py-3 font-semibold ${activeTab === 'settings' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-400'}`}>League Settings</button>
+                        <button onClick={() => setActiveTab('teams')} className={`px-4 py-3 font-semibold ${activeTab === 'teams' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-400'}`}>Manage Teams</button>
+                        <button onClick={() => setActiveTab('commissioner')} className={`px-4 py-3 font-semibold ${activeTab === 'commissioner' ? 'border-b-2 border-purple-400 text-white' : 'text-gray-400'}`}>Commissioner</button>
+                        <button onClick={() => setActiveTab('danger')} className={`px-4 py-3 font-semibold ${activeTab === 'danger' ? 'border-b-2 border-red-500 text-red-400' : 'text-gray-400'}`}>Danger Zone</button>
+                    </div>
+
+                    {activeTab === 'settings' && (
+                        <div>
+                            <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                                <h3 className="text-2xl font-semibold mb-4 text-blue-400">General Settings</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                                    <label className="block sm:col-span-2 md:col-span-3"><span className="text-gray-300">League Name</span><input type="text" value={leagueName} onChange={e => setLeagueName(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                                    <label className="block"><span className="text-gray-300">Number of Teams</span><select value={settings.numTeams} onChange={e => handleGeneralSettingChange('numTeams', e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white">{[8, 10, 12, 14, 16].map(n => <option key={n} value={n}>{n} Teams</option>)}</select></label>
+                                    <label className="block"><span className="text-gray-300">Regular Season Weeks</span><select value={settings.numWeeks} onChange={e => handleGeneralSettingChange('numWeeks', e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white">{[12, 13, 14, 15].map(n => <option key={n} value={n}>{n} Weeks</option>)}</select></label>
+                                    <label className="block"><span className="text-gray-300">Playoff Weeks</span><select value={settings.playoffWeeks} onChange={e => handleGeneralSettingChange('playoffWeeks', e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white">{[1, 2, 3, 4].map(n => <option key={n} value={n}>{n} Weeks</option>)}</select></label>
+                                    <label className="block"><span className="text-gray-300">Team Salary Cap</span><input type="number" value={settings.teamSalary} onChange={e => handleGeneralSettingChange('teamSalary', e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                                    <label className="block"><span className="text-gray-300">Players to Drop</span><input type="number" value={settings.playersToDrop} onChange={e => handleGeneralSettingChange('playersToDrop', e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                                    <label className="block"><span className="text-gray-300">Salary Raise %</span><input type="number" value={settings.salaryRaisePercentage} onChange={e => handleGeneralSettingChange('salaryRaisePercentage', e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                                    <label className="block"><span className="text-gray-300">Min Player Salary</span><input type="number" value={settings.minPlayerSalary || 0.5} onChange={e => handleGeneralSettingChange('minPlayerSalary', e.target.value)} min="0.5" max="10" step="0.01" className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                                </div>
+                            </div>
+                            
+                            <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                                <h3 className="text-2xl font-semibold mb-4 text-yellow-400">Divisions</h3>
+                                <div className="space-y-4">
+                                    {settings.divisions && settings.divisions.length > 0 ? settings.divisions.map((divisionName, index) => (
+                                        <div key={index} className="flex items-center gap-4">
+                                            <input type="text" value={divisionName} onChange={(e) => handleDivisionNameChange(index, e.target.value)} className="w-full p-2 rounded-md bg-gray-600 text-white" />
+                                            <button onClick={() => removeDivision(index)} className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded-md">-</button>
+                                        </div>
+                                    )) : <p className="text-gray-400">No divisions are set up. Add one to get started.</p>}
+                                </div>
+                                {(!settings.divisions || settings.divisions.length < 4) && <button onClick={addDivision} className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md">Add Division</button>}
+                            </div>
+
+                            <div className="mb-8 p-4 bg-gray-700 rounded-lg">
+                                <h4 className="text-xl font-semibold mb-3 text-purple-400">Roster Limits</h4>
+                                <p className="text-sm text-gray-400 mb-4">Starting lineup slots are fixed. You can adjust the size of your bench and IR here.</p>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                                    {Object.entries(settings.rosterLimits || INITIAL_ROSTER_LIMITS).map(([pos, val]) => <label key={pos} className="block"><span className="text-gray-300">{pos}</span><input type="number" value={val} onChange={(e) => handleNestedSettingChange('rosterLimits', pos, Number(e.target.value))} className="w-full p-2 mt-1 rounded-md bg-gray-600 text-white"/></label>)}
+                                </div>
+                            </div>
+
+                            <div className="p-4 bg-gray-700 rounded-lg">
+                                <h4 className="text-xl font-semibold mb-3 text-green-400">Scoring Rules</h4>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                                    {Object.entries(settings.scoringRules || STANDARD_SCORING_RULES).map(([rule, val]) => <label key={rule} className="block"><span className="text-gray-300">{rule}</span><input type="number" step="0.05" value={val} onChange={(e) => handleNestedSettingChange('scoringRules', rule, Number(e.target.value))} className="w-full p-2 mt-1 rounded-md bg-gray-600 text-white"/></label>)}
+                                </div>
+                            </div>
+
+                            <button onClick={handleUpdateSettings} disabled={isLoading} className="mt-8 w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-md disabled:opacity-50">
+                                {isLoading ? 'Saving...' : 'Save All Settings'}
+                            </button>
+                        </div>
+                    )}
+                    
+                    {activeTab === 'teams' && (
+                        <div>
+                            <h3 className="text-2xl font-semibold mb-4 text-blue-400">Manage Teams</h3>
+                            <div className="space-y-4">
+                                {teamsData.map(team => (
+                                    <div key={team.id} className="bg-gray-700 p-4 rounded-lg flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                            <img src={team.avatarUrl || "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg=="} alt="Team Avatar" className="w-10 h-10 rounded-full object-cover"/>
+                                            <span className="font-semibold">{team.teamName}</span>
+                                        </div>
+                                        <button onClick={() => setTeamToDelete(team)} disabled={isLoading} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md font-semibold">Delete Team</button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'commissioner' && (
+                        <div>
+                            <h3 className="text-2xl font-semibold mb-4 text-purple-400">Commissioner Management</h3>
+                            <div className="space-y-6">
+                                <div className="bg-gray-700 p-4 rounded-lg">
+                                    <h4 className="text-lg font-semibold mb-3 text-purple-300">Current Commissioner</h4>
+                                    <p className="text-gray-300">You are currently the commissioner of this league.</p>
+                                </div>
+                                
+                                <div className="bg-gray-700 p-4 rounded-lg">
+                                    <h4 className="text-lg font-semibold mb-3 text-purple-300">Promote to Commissioner</h4>
+                                    <p className="text-gray-300 mb-4">Select a team owner to promote as the new commissioner. This will transfer all commissioner powers to them.</p>
+                                    <div className="space-y-3">
+                                        {teamsData.filter(team => team.ownerId !== currentLeague.commissionerId).map(team => (
+                                            <div key={team.id} className="flex items-center justify-between p-3 bg-gray-600 rounded-lg">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={team.avatarUrl || "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg=="} alt="Team Avatar" className="w-8 h-8 rounded-full object-cover"/>
+                                                    <span className="font-semibold">{team.teamName}</span>
+                                                </div>
+                                                <button 
+                                                    onClick={() => setTeamToPromote(team)}
+                                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-md font-semibold"
+                                                >
+                                                    Promote
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {teamsData.filter(team => team.ownerId !== currentLeague.commissionerId).length === 0 && (
+                                            <p className="text-gray-400 text-center py-4">No other team owners available to promote.</p>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'danger' && (
+                        <div className="p-6 bg-red-900/20 border border-red-500 rounded-lg">
+                            <h3 className="text-2xl font-semibold mb-4 text-red-400">Danger Zone</h3>
+                            <p className="text-gray-300 mb-6">This action is irreversible and will permanently delete the entire league and all associated teams and data. Please be certain.</p>
+                            <button onClick={() => setShowDeleteLeagueModal(true)} className="w-full px-6 py-3 bg-red-600 hover:bg-red-700 font-bold rounded-md">Delete League</button>
+                        </div>
+                    )}
+
+                    <ConfirmationModal
+                        isOpen={!!teamToDelete}
+                        onClose={() => setTeamToDelete(null)}
+                        onConfirm={handleDeleteTeam}
+                        title={`Delete ${teamToDelete?.teamName}?`}
+                    >
+                        Are you sure you want to delete this team? All of its players will be returned to the free agent pool. This action cannot be undone.
+                    </ConfirmationModal>
+
+                    <ConfirmationModal
+                        isOpen={showDeleteLeagueModal}
+                        onClose={() => { setShowDeleteLeagueModal(false); setDeleteConfirmText(''); }}
+                        onConfirm={handleDeleteLeague}
+                        title="Permanently Delete League?"
+                    >
+                        <p className="mb-4">This will delete the league, all teams, all trades, and all history permanently. To confirm, please type the league name below: <strong className="text-yellow-300">{currentLeague.name}</strong></p>
+                        <input 
+                            type="text" 
+                            value={deleteConfirmText}
+                            onChange={(e) => setDeleteConfirmText(e.target.value)}
+                            className="w-full p-2 rounded-md bg-gray-900 text-white border border-red-400"
+                        />
+                    </ConfirmationModal>
+
+                    <ConfirmationModal
+                        isOpen={!!teamToPromote}
+                        onClose={() => setTeamToPromote(null)}
+                        onConfirm={() => handlePromoteCommissioner(teamToPromote)}
+                        title={`Promote ${teamToPromote?.teamName} to Commissioner?`}
+                    >
+                        <p className="mb-4">This will transfer all commissioner powers to <strong className="text-purple-300">{teamToPromote?.teamName}</strong>. You will no longer have commissioner access to this league.</p>
+                        <p className="text-sm text-gray-400">This action cannot be undone. The new commissioner will have full control over league settings, team management, and draft operations.</p>
+                    </ConfirmationModal>
+                </div>
+            );
+        };
+        // --- END: COMMISSIONER TOOLS COMPONENT ---
+
+        const TradeCenter = ({ db, userId, showMessage, currentLeague, currentTeamId, teamsData, allPlayers }) => {
+            const [view, setView] = useState('pending'); // 'pending' or 'new'
+            const [tradePartners, setTradePartners] = useState([currentTeamId]);
+            const [tradeAssets, setTradeAssets] = useState({ [currentTeamId]: { players: [] } });
+            const [pendingTrades, setPendingTrades] = useState([]);
+            const [isLoading, setIsLoading] = useState(true);
+            const salaryCap = currentLeague.settings.teamSalary;
+
+            // Memoize player details map for performance
+            const playerDetailsMap = useMemo(() =>
+                allPlayers.reduce((acc, player) => {
+                    acc[player.id] = player;
+                    return acc;
+                }, {}), [allPlayers]);
+            
+            // Memoize team data map for performance
+            const teamDataMap = useMemo(() =>
+                teamsData.reduce((acc, team) => {
+                    acc[team.id] = team;
+                    return acc;
+                }, {}), [teamsData]);
+
+            // Fetch pending trades
+            useEffect(() => {
+                const tradesRef = db.collection(`leagues/${currentLeague.id}/trades`);
+                const unsubscribe = tradesRef.where('teamIds', 'array-contains', currentTeamId).orderBy('createdAt', 'desc').onSnapshot(snapshot => {
+                    const trades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setPendingTrades(trades);
+                    setIsLoading(false);
+                }, error => {
+                    console.error("Error fetching trades:", error);
+                    showMessage("Failed to load trades.", "error");
+                    setIsLoading(false);
+                });
+                return () => unsubscribe();
+            }, [db, currentLeague.id, currentTeamId]);
+
+            const resetTrade = () => {
+                setTradePartners([currentTeamId]);
+                setTradeAssets({ [currentTeamId]: { players: [] } });
+            };
+
+            const handlePartnerSelect = (partnerId) => {
+                if (!partnerId) return;
+                let newPartners;
+                if (tradePartners.includes(partnerId)) {
+                    newPartners = tradePartners.filter(id => id !== partnerId);
+                } else {
+                    if (tradePartners.length >= 3) {
+                        showMessage("Maximum of 3 teams per trade.", "error");
+                        return;
+                    }
+                    newPartners = [...tradePartners, partnerId];
+                }
+                setTradePartners(newPartners);
+                
+                const newAssets = { ...tradeAssets };
+                newPartners.forEach(id => {
+                    if (!newAssets[id]) newAssets[id] = { players: [] };
+                });
+                Object.keys(newAssets).forEach(id => {
+                    if (!newPartners.includes(id)) delete newAssets[id];
+                });
+                setTradeAssets(newAssets);
+            };
+
+            const handleAssetSelect = (teamId, playerId) => {
+                const currentAssets = tradeAssets[teamId]?.players || [];
+                const newAssets = { ...tradeAssets };
+                if (currentAssets.includes(playerId)) {
+                    newAssets[teamId].players = currentAssets.filter(p => p !== playerId);
+                } else {
+                    newAssets[teamId].players = [...currentAssets, playerId];
+                }
+                setTradeAssets(newAssets);
+            };
+
+            const calculateSalaries = useMemo(() => {
+                const results = {};
+                tradePartners.forEach(teamId => {
+                    const team = teamDataMap[teamId];
+                    if (!team) return;
+
+                    const currentRosterPlayers = [ ...Object.values(team.roster.lineup), ...team.roster.bench, ...team.roster.ir ].filter(p => p);
+                    const currentSalary = currentRosterPlayers.reduce((sum, pId) => sum + (playerDetailsMap[pId]?.salary || 0), 0);
+                    
+                    const sendingPlayers = tradeAssets[teamId]?.players || [];
+                    const receivingPlayers = Object.entries(tradeAssets)
+                        .filter(([id, _]) => id !== teamId)
+                        .flatMap(([_, assets]) => assets.players);
+
+                    const salaryOut = sendingPlayers.reduce((sum, pId) => sum + (playerDetailsMap[pId]?.salary || 0), 0);
+                    const salaryIn = receivingPlayers.reduce((sum, pId) => sum + (playerDetailsMap[pId]?.salary || 0), 0);
+                    
+                    const newSalary = currentSalary - salaryOut + salaryIn;
+                    results[teamId] = { currentSalary, newSalary, salaryIn, salaryOut };
+                });
+                return results;
+            }, [tradeAssets, tradePartners, teamDataMap, playerDetailsMap]);
+
+            const canProposeTrade = useMemo(() => {
+                if (tradePartners.length < 2) return false;
+                const totalAssets = Object.values(tradeAssets).flatMap(a => a.players).length;
+                if (totalAssets === 0) return false;
+                
+                // Check for salary cap violations
+                return Object.entries(calculateSalaries).every(([_, { newSalary }]) => newSalary <= salaryCap);
+            }, [calculateSalaries, tradePartners, salaryCap]);
+            
+            const handleProposeTrade = async () => {
+                if (!canProposeTrade) {
+                    return showMessage("Trade is invalid. Check assets and salary caps.", "error");
+                }
+                setIsLoading(true);
+                try {
+                    const tradeData = {
+                        initiatorId: userId,
+                        teamIds: tradePartners,
+                        assets: tradeAssets,
+                        status: 'pending',
+                        acceptances: { [currentTeamId]: true },
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    };
+                    await db.collection(`leagues/${currentLeague.id}/trades`).add(tradeData);
+                    showMessage("Trade proposed successfully!", "success");
+                    setView('pending');
+                    resetTrade();
+                } catch (error) {
+                    console.error("Error proposing trade:", error);
+                    showMessage("Failed to propose trade.", "error");
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const handleTradeResponse = async (tradeId, response) => {
+                const tradeRef = db.doc(`leagues/${currentLeague.id}/trades/${tradeId}`);
+                setIsLoading(true);
+                try {
+                    if (response === 'accept') {
+                        await tradeRef.update({ [`acceptances.${currentTeamId}`]: true });
+                        const updatedTradeDoc = await tradeRef.get();
+                        const trade = updatedTradeDoc.data();
+                        
+                        // Check if all parties have accepted
+                        const allAccepted = trade.teamIds.every(id => trade.acceptances[id]);
+                        
+                        if (allAccepted) {
+                            await executeTrade(trade, tradeRef);
+                        } else {
+                            showMessage("Trade accepted. Waiting for other teams.", "success");
+                        }
+                    } else { // Reject or Cancel
+                        await tradeRef.update({ status: response === 'reject' ? 'rejected' : 'canceled' });
+                        showMessage(`Trade ${response === 'reject' ? 'rejected' : 'canceled'}.`, "info");
+                    }
+                } catch (error) {
+                    console.error("Error responding to trade:", error);
+                    showMessage("An error occurred.", "error");
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+            
+            const executeTrade = async (trade, tradeRef) => {
+                showMessage("All teams accepted. Processing trade...", "info");
+                const batch = db.batch();
+
+                // Final salary cap check before execution
+                for (const teamId of trade.teamIds) {
+                    const team = teamDataMap[teamId];
+                    const currentSalary = [ ...Object.values(team.roster.lineup), ...team.roster.bench, ...team.roster.ir ].filter(p => p).reduce((sum, pId) => sum + (playerDetailsMap[pId]?.salary || 0), 0);
+                    const salaryOut = (trade.assets[teamId]?.players || []).reduce((sum, pId) => sum + (playerDetailsMap[pId]?.salary || 0), 0);
+                    const salaryIn = Object.entries(trade.assets)
+                        .filter(([id, _]) => id !== teamId)
+                        .flatMap(([_, assets]) => assets.players)
+                        .reduce((sum, pId) => sum + (playerDetailsMap[pId]?.salary || 0), 0);
+                    
+                    if (currentSalary - salaryOut + salaryIn > salaryCap) {
+                        await tradeRef.update({ status: 'failed_salary_cap' });
+                        showMessage(`Trade failed: ${team.teamName} would exceed the salary cap.`, "error");
+                        return;
+                    }
+                }
+
+                // Process roster updates
+                trade.teamIds.forEach(teamId => {
+                    const teamRef = db.doc(`artifacts/${appId}/public/data/teams/${teamId}`);
+                    const team = teamDataMap[teamId];
+                    const playersOut = trade.assets[teamId]?.players || [];
+                    const playersIn = Object.entries(trade.assets)
+                        .filter(([id, _]) => id !== teamId)
+                        .flatMap(([_, assets]) => assets.players);
+                    
+                    let newRoster = JSON.parse(JSON.stringify(team.roster));
+
+                    // Remove players from lineup or bench
+                    playersOut.forEach(pId => {
+                        Object.keys(newRoster.lineup).forEach(slot => {
+                            if (newRoster.lineup[slot] === pId) {
+                                newRoster.lineup[slot] = null;
+                            }
+                        });
+                        newRoster.bench = newRoster.bench.filter(benchPId => benchPId !== pId);
+                        newRoster.ir = newRoster.ir.filter(irPId => irPId !== pId);
+                    });
+
+                    // Add players to bench
+                    newRoster.bench = [...newRoster.bench, ...playersIn];
+                    
+                    batch.update(teamRef, { roster: newRoster });
+                });
+
+                // Mark trade as complete
+                batch.update(tradeRef, { status: 'completed' });
+                
+                await batch.commit();
+                showMessage("Trade complete! Rosters updated.", "success");
+            };
+
+            const renderNewTrade = () => (
+                <div className="bg-gray-700 p-6 rounded-lg">
+                    <h3 className="text-2xl font-bold text-blue-400 mb-4">Propose a New Trade</h3>
+                    {/* Partner Selection */}
+                    <div className="mb-6">
+                        <h4 className="text-lg font-semibold mb-2">Select Trade Partners (up to 2 others)</h4>
+                        <div className="flex flex-wrap gap-2">
+                            {teamsData.filter(t => t.id !== currentTeamId).map(team => (
+                                <button key={team.id} onClick={() => handlePartnerSelect(team.id)} className={`px-4 py-2 rounded-md font-semibold ${tradePartners.includes(team.id) ? 'bg-green-600' : 'bg-gray-600 hover:bg-gray-500'}`}>
+                                    {team.teamName}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Asset Selection */}
+                    {tradePartners.length > 1 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {tradePartners.map(teamId => {
+                                const team = teamDataMap[teamId];
+                                const teamPlayers = [ ...Object.values(team.roster.lineup).filter(p => p), ...team.roster.bench, ...team.roster.ir ];
+                                return (
+                                    <div key={teamId} className="bg-gray-800 p-4 rounded-lg">
+                                        <div className="flex items-center gap-3 mb-3 border-b border-gray-600 pb-2">
+                                            <img src={team.avatarUrl || "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg=="} alt="Team Avatar" className="w-10 h-10 rounded-full object-cover"/>
+                                            <h4 className="text-xl font-bold">{team.teamName}</h4>
+                                        </div>
+                                        <div className="max-h-60 overflow-y-auto pr-2">
+                                        {teamPlayers.length > 0 ? teamPlayers.map(pId => {
+                                            const player = playerDetailsMap[pId];
+                                            return (
+                                                <div key={pId} className="flex items-center justify-between py-1">
+                                                    <label className="flex items-center cursor-pointer">
+                                                        <input type="checkbox" checked={tradeAssets[teamId]?.players.includes(pId)} onChange={() => handleAssetSelect(teamId, pId)} className="form-checkbox h-5 w-5 bg-gray-700 border-gray-500 rounded text-blue-500 focus:ring-blue-500"/>
+                                                        <span className="ml-3">{player.name} (${player.salary})</span>
+                                                    </label>
+                                                </div>
+                                            );
+                                        }) : <p className="text-gray-400">No players on roster.</p>}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                    
+                    {/* Summary & Propose Button */}
+                    {tradePartners.length > 1 && (
+                         <div className="mt-8 p-6 bg-gray-800 rounded-lg">
+                            <h3 className="text-2xl font-bold text-green-400 mb-4">Trade Summary & Salary Impact</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {Object.entries(calculateSalaries).map(([teamId, data]) => {
+                                    const team = teamDataMap[teamId];
+                                    const isOverCap = data.newSalary > salaryCap;
+                                    return (
+                                    <div key={teamId} className={`p-3 rounded ${isOverCap ? 'bg-red-900' : 'bg-gray-700'}`}>
+                                        <p className="font-bold text-lg">{team.teamName}</p>
+                                        <p>Current: ${data.currentSalary.toFixed(2)}</p>
+                                        <p className={`font-bold ${isOverCap ? 'text-red-400' : 'text-green-400'}`}>New: ${data.newSalary.toFixed(2)}</p>
+                                        <p className="text-xs text-gray-400">Cap: ${salaryCap}</p>
+                                        {isOverCap && <p className="text-xs text-red-300 font-bold">Over Salary Cap!</p>}
+                                    </div>
+                                    );
+                                })}
+                            </div>
+                            <button onClick={handleProposeTrade} disabled={!canProposeTrade || isLoading} className="mt-6 w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                               {isLoading ? 'Proposing...' : 'Propose Trade'}
+                            </button>
+                            {!canProposeTrade && <p className="text-center text-red-400 text-sm mt-2">Cannot propose trade. Ensure at least one asset is selected and all teams are under the salary cap.</p>}
+                        </div>
+                    )}
+                </div>
+            );
+
+            const renderPendingTrades = () => (
+                 <div className="bg-gray-700 p-6 rounded-lg">
+                    <h3 className="text-2xl font-bold text-yellow-400 mb-4">Pending & Past Trades</h3>
+                    {isLoading ? <p>Loading trades...</p> : 
+                    pendingTrades.length === 0 ? <p className="text-gray-400">You are not involved in any trades.</p> : (
+                        <div className="space-y-6">
+                            {pendingTrades.map(trade => {
+                                const initiatorTeam = teamsData.find(t => t.ownerId === trade.initiatorId);
+                                const isUserInitiator = trade.initiatorId === userId;
+                                const userHasAccepted = trade.acceptances[currentTeamId];
+                                return (
+                                <div key={trade.id} className="bg-gray-800 p-4 rounded-lg shadow-md">
+                                    <div className="flex justify-between items-center mb-4 border-b border-gray-600 pb-2">
+                                        <h4 className="text-xl font-semibold">Trade with {trade.teamIds.filter(id => id !== currentTeamId).map(id => teamDataMap[id]?.teamName).join(', ')}</h4>
+                                        <span className={`px-3 py-1 text-sm font-bold rounded-full ${
+                                            {'pending': 'bg-yellow-500 text-gray-900', 'completed': 'bg-green-500 text-white', 'rejected': 'bg-red-500 text-white', 'canceled': 'bg-gray-500 text-white', 'failed_salary_cap': 'bg-red-700 text-white'}[trade.status]
+                                        }`}>{trade.status.replace('_', ' ').toUpperCase()}</span>
+                                    </div>
+
+                                    {/* Assets View */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="bg-red-900/50 p-3 rounded">
+                                            <h5 className="font-bold text-red-400">You Give:</h5>
+                                            <ul className="list-disc list-inside text-sm mt-1">
+                                                {(trade.assets[currentTeamId]?.players || []).map(pId => <li key={pId}>{playerDetailsMap[pId]?.name} (${playerDetailsMap[pId]?.salary})</li>)}
+                                                {(trade.assets[currentTeamId]?.players || []).length === 0 && <li className="text-gray-400">Nothing</li>}
+                                            </ul>
+                                        </div>
+                                        <div className="bg-green-900/50 p-3 rounded">
+                                            <h5 className="font-bold text-green-400">You Receive:</h5>
+                                            <ul className="list-disc list-inside text-sm mt-1">
+                                                {Object.entries(trade.assets).filter(([id, _]) => id !== currentTeamId).flatMap(([_, assets]) => assets.players).map(pId => <li key={pId}>{playerDetailsMap[pId]?.name} (${playerDetailsMap[pId]?.salary})</li>)}
+                                                {Object.entries(trade.assets).filter(([id, _]) => id !== currentTeamId).flatMap(([_, assets]) => assets.players).length === 0 && <li className="text-gray-400">Nothing</li>}
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                    {/* Acceptance Status & Actions */}
+                                    <div className="mt-4 pt-2 border-t border-gray-600">
+                                         <div className="text-xs text-gray-400 mb-2 flex flex-wrap gap-x-3 gap-y-1">
+                                            <span>Acceptances:</span>
+                                            {trade.teamIds.map(id => {
+                                                const team = teamDataMap[id];
+                                                return (
+                                                    <span key={id} className={`flex items-center gap-1.5 ${trade.acceptances[id] ? 'text-green-400' : 'text-yellow-400'}`}>
+                                                        <img src={team?.avatarUrl || "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg=="} alt={team?.teamName} className="w-4 h-4 rounded-full" />
+                                                        {team?.teamName}
+                                                        {trade.acceptances[id] ? ' ✔' : '  ...'}
+                                                    </span>
+                                                )
+                                            })}
+                                        </div>
+                                        {trade.status === 'pending' && (
+                                            <div className="flex gap-4 mt-2">
+                                                {!userHasAccepted && <button onClick={() => handleTradeResponse(trade.id, 'accept')} disabled={isLoading} className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-md font-semibold">Accept</button>}
+                                                {!userHasAccepted && <button onClick={() => handleTradeResponse(trade.id, 'reject')} disabled={isLoading} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md font-semibold">Reject</button>}
+                                                {isUserInitiator && <button onClick={() => handleTradeResponse(trade.id, 'cancel')} disabled={isLoading} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md font-semibold">Cancel</button>}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+
+            return (
+                 <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-7xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">Trade Center</h2>
+                    <div className="flex justify-center border-b border-gray-600 mb-6">
+                        <button onClick={() => setView('pending')} className={`px-4 sm:px-6 py-3 font-semibold ${view === 'pending' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-400'}`}>Pending Trades</button>
+                        <button onClick={() => { setView('new'); resetTrade(); }} className={`px-4 sm:px-6 py-3 font-semibold ${view === 'new' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-400'}`}>Propose New Trade</button>
+                    </div>
+                    {view === 'new' ? renderNewTrade() : renderPendingTrades()}
+                 </div>
+            );
+        };
+        
+        const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handleLeaveLeague, onPlayerTransaction, currentTeamId }) => {
+            const { db } = useFirebase();
+            const [newTeamName, setNewTeamName] = useState(teamData.teamName || '');
+            const [isSavingTeamName, setIsSavingTeamName] = useState(false);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [bidAmount, setBidAmount] = useState(1);
+            const playerSelectRef = useRef(null);
+            const rosterLimits = currentLeague?.settings?.rosterLimits || INITIAL_ROSTER_LIMITS;
+            const isAuctionComplete = currentLeague?.auction?.status === 'complete';
+
+            useEffect(() => {
+                setNewTeamName(teamData.teamName || '');
+            }, [teamData.teamName]);
+
+            const handleUpdateTeamName = async () => {
+                if (!db || !teamData?.id || !newTeamName.trim()) return showMessage("Team name cannot be empty.", "error");
+                
+                setIsSavingTeamName(true);
+                const teamDocRef = db.doc(`artifacts/${appId}/public/data/teams/${teamData.id}`);
+                try {
+                    await teamDocRef.update({ teamName: newTeamName.trim() });
+                    showMessage("Team name updated successfully!", "success");
+                } catch (error) {
+                    showMessage("Failed to update team name.", "error");
+                } finally {
+                    setIsSavingTeamName(false);
+                }
+            };
+
+            const handlePlaceWaiverBid = async () => {
+                if (!isAuctionComplete) {
+                    return showMessage("You cannot add free agents until the auction is complete.", "error");
+                }
+                const playerId = playerSelectRef.current.value;
+                if (!playerId) return showMessage("Please select a player.", "error");
+                if (bidAmount <= 0) return showMessage("Bid must be greater than zero.", "error");
+
+                const waiverRef = db.collection(`leagues/${currentLeague.id}/waivers`).doc(playerId);
+
+                try {
+                    const waiverDoc = await waiverRef.get();
+                    if (waiverDoc.exists) {
+                        return showMessage("This player is already on the waiver wire. Go to the Waiver Wire tab to bid.", "error");
+                    }
+
+                    const expiration = new Date();
+                    expiration.setHours(expiration.getHours() + 24);
+
+                    await waiverRef.set({
+                        playerId: playerId,
+                        bids: {
+                            [currentTeamId]: Number(bidAmount)
+                        },
+                        highestBid: Number(bidAmount),
+                        highestBidder: currentTeamId,
+                        expiration: firebase.firestore.Timestamp.fromDate(expiration)
+                    });
+
+                    showMessage(`You have placed a bid of $${bidAmount} on ${getPlayerDetails(playerId, allPlayers).name}. The 24-hour auction has started.`, "success");
+                    setBidAmount(1);
+
+                } catch (error) {
+                    showMessage("Error placing waiver bid.", "error");
+                    console.error("Waiver bid error:", error);
+                }
+            };
+
+            const handleRemovePlayer = async (playerId) => {
+                if (!db || !teamData?.id) return;
+                const playerToRemove = getPlayerDetails(playerId, allPlayers);
+                if (!playerToRemove) return showMessage("Player not found.", "error");
+                
+                try {
+                    const batch = db.batch();
+                    const teamDocRef = db.doc(`artifacts/${appId}/public/data/teams/${teamData.id}`);
+                    
+                    const newRoster = JSON.parse(JSON.stringify(teamData.roster));
+                    Object.keys(newRoster.lineup).forEach(slot => {
+                        if (newRoster.lineup[slot] === playerId) {
+                            newRoster.lineup[slot] = null;
+                        }
+                    });
+                    newRoster.bench = newRoster.bench.filter(pId => pId !== playerId);
+                    newRoster.ir = newRoster.ir.filter(pId => pId !== playerId);
+
+                    batch.update(teamDocRef, { roster: newRoster });
+
+                    if (currentLeague && currentLeague.id) {
+                        const leagueDocRef = db.doc(`leagues/${currentLeague.id}`);
+                        batch.update(leagueDocRef, {
+                            allRosteredPlayerIds: firebase.firestore.FieldValue.arrayRemove(playerId)
+                        });
+                    }
+
+                    await batch.commit();
+                    showMessage(`${playerToRemove.name} dropped from your roster.`, "success");
+                    onPlayerTransaction();
+                } catch (error) {
+                    showMessage("Error dropping player.", "error");
+                    console.error("Error dropping player:", error);
+                }
+            };
+
+            const handleMovePlayer = async (playerId, from, to) => {
+                const newRoster = JSON.parse(JSON.stringify(teamData.roster));
+
+                // Remove player from original spot
+                if (from === 'bench') newRoster.bench = newRoster.bench.filter(pId => pId !== playerId);
+                else if (from === 'ir') newRoster.ir = newRoster.ir.filter(pId => pId !== playerId);
+                else newRoster.lineup[from] = null;
+
+                // Add player to new spot
+                if (to === 'bench') newRoster.bench.push(playerId);
+                else if (to === 'ir') newRoster.ir.push(playerId);
+                else newRoster.lineup[to] = playerId;
+
+                try {
+                    const teamDocRef = db.doc(`artifacts/${appId}/public/data/teams/${teamData.id}`);
+                    await teamDocRef.update({ roster: newRoster });
+                    showMessage("Roster updated.", "success");
+                } catch(error) {
+                    showMessage("Failed to update roster.", "error");
+                }
+            };
+
+            const getEligibleSlotsForPlayer = (playerId) => {
+                const playerDetails = getPlayerDetails(playerId, allPlayers);
+                if (!playerDetails) return [];
+
+                const pos = playerDetails.position;
+                const emptySlots = Object.keys(teamData.roster.lineup).filter(slot => teamData.roster.lineup[slot] === null);
+                
+                return emptySlots.filter(slotKey => {
+                    const slotPosition = slotKey.replace(/[0-9]/g, ''); // "RB1" -> "RB"
+                    if (slotPosition === pos) return true;
+                    if (slotPosition === 'Flex' && ['RB', 'WR', 'TE'].includes(pos)) return true;
+                    if (slotPosition === 'DFlex' && ['DL', 'LB', 'DB'].includes(pos)) return true;
+                    return false;
+                });
+            };
+
+            const availablePlayers = getAvailablePlayers(currentLeague ? currentLeague.allRosteredPlayerIds : [], allPlayers)
+                                             .filter(player => player.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+            const PlayerActions = ({ playerId, from }) => {
+                const [showDropdown, setShowDropdown] = useState(false);
+                const eligibleSlots = getEligibleSlotsForPlayer(playerId);
+
+                if (from === 'bench' || from === 'ir') {
+                    if (eligibleSlots.length === 0) {
+                        return <span className="text-xs text-gray-500">No open slots</span>;
+                    }
+                    return (
+                        <div className="relative">
+                            <button onClick={() => setShowDropdown(!showDropdown)} className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md">Start</button>
+                            {showDropdown && (
+                                <div className="absolute right-0 mt-2 w-48 bg-gray-600 rounded-md shadow-lg z-10">
+                                    {eligibleSlots.map(slot => (
+                                        <a key={slot} href="#" onClick={() => { handleMovePlayer(playerId, from.toLowerCase(), slot); setShowDropdown(false); }} className="block px-4 py-2 text-sm text-gray-200 hover:bg-blue-500">
+                                            Move to {slot.replace(/(\d+)/, ' $1')}
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                } else { // It's a lineup slot
+                    return <button onClick={() => handleMovePlayer(playerId, from, 'bench')} className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded-md">Bench</button>;
+                }
+            };
+            
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-7xl mx-auto my-8 text-white">
+                    <div className="flex flex-col sm:flex-row items-center gap-6 mb-6">
+                        <Avatar
+                            docRefPath={`artifacts/${appId}/public/data/teams/${teamData.id}`}
+                            storagePath={`team-avatars/${teamData.id}`}
+                            currentAvatarUrl={teamData.avatarUrl}
+                            showMessage={showMessage}
+                            size="h-24 w-24"
+                        />
+                        <div className="flex-grow w-full">
+                            <h2 className="text-3xl font-bold text-white mb-2 text-center sm:text-left">Your Roster</h2>
+                            <div className="p-4 bg-gray-700 rounded-lg shadow-inner flex flex-col sm:flex-row items-center justify-between gap-4">
+                                <label className="block flex-grow w-full">
+                                    <span className="text-gray-300 text-lg font-semibold">Team Name:</span>
+                                    <input type="text" value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} className="w-full p-2 rounded-md bg-gray-600 text-white border border-gray-500 focus:ring-blue-500 focus:border-blue-500 mt-1" />
+                                </label>
+                                <button onClick={handleUpdateTeamName} disabled={isSavingTeamName} className="w-full sm:w-auto px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-md shadow-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    {isSavingTeamName ? 'Saving...' : 'Save Name'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8">
+                        <div>
+                             <h3 className="text-2xl font-bold text-blue-400 mb-4">Starting Lineup</h3>
+                             <div className="space-y-2">
+                                {teamData.roster.lineup && LINEUP_DISPLAY_ORDER.map(slot => {
+                                    const playerId = teamData.roster.lineup[slot];
+                                    const player = playerId ? getPlayerDetails(playerId, allPlayers) : null;
+                                    return (
+                                        <div key={slot} className="bg-gray-700 p-3 rounded-md flex items-center justify-between">
+                                            <div className="flex items-center gap-4 truncate">
+                                                <span className="font-bold text-blue-300 w-16 flex-shrink-0">{slot.replace(/(\d+)/, ' $1')}</span>
+                                                {player ? (
+                                                     <span className="truncate">{player.name} ({player.position}) - ${player.salary}</span>
+                                                ) : (
+                                                    <span className="text-gray-500">-- Empty --</span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                {player && <PlayerActions playerId={playerId} from={slot} />}
+                                                {player && <button onClick={() => handleRemovePlayer(playerId)} className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md">Drop</button>}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                             </div>
+                        </div>
+                        <div className="space-y-6">
+                            <div>
+                                <h3 className="text-2xl font-bold text-purple-400 mb-4">Bench</h3>
+                                <div className="space-y-2">
+                                    {Array.from({ length: rosterLimits.Bench }).map((_, index) => {
+                                        const playerId = teamData.roster.bench[index];
+                                        const player = playerId ? getPlayerDetails(playerId, allPlayers) : null;
+                                        return (
+                                            <div key={`bench-${index}`} className="bg-gray-700 p-3 rounded-md flex items-center justify-between h-[50px]">
+                                                <div className="flex items-center gap-4 truncate">
+                                                    <span className="font-bold text-purple-300 w-20 flex-shrink-0">{`Bench ${index + 1}`}</span>
+                                                    {player ? (
+                                                        <span className="truncate">{player.name} ({player.position}) - ${player.salary}</span>
+                                                    ) : (
+                                                        <span className="text-gray-500">-- Empty --</span>
+                                                    )}
+                                                </div>
+                                                {player && (
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                       <PlayerActions playerId={playerId} from="bench" />
+                                                       <button onClick={() => handleRemovePlayer(playerId)} className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md">Drop</button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                             <div>
+                                <h3 className="text-2xl font-bold text-red-400 mb-4">Injured Reserve</h3>
+                                 <div className="space-y-2">
+                                    {Array.from({ length: rosterLimits.IR }).map((_, index) => {
+                                        const playerId = teamData.roster.ir[index];
+                                        const player = playerId ? getPlayerDetails(playerId, allPlayers) : null;
+                                        return (
+                                            <div key={`ir-${index}`} className="bg-gray-700 p-3 rounded-md flex items-center justify-between h-[50px]">
+                                                <div className="flex items-center gap-4 truncate">
+                                                    <span className="font-bold text-red-300 w-20 flex-shrink-0">{`IR ${index + 1}`}</span>
+                                                    {player ? (
+                                                        <span className="truncate">{player.name} ({player.position}) - ${player.salary}</span>
+                                                    ) : (
+                                                        <span className="text-gray-500">-- Empty --</span>
+                                                    )}
+                                                </div>
+                                                {player && (
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                       <PlayerActions playerId={playerId} from="ir" />
+                                                       <button onClick={() => handleRemovePlayer(playerId)} className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md">Drop</button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="mt-8 p-4 sm:p-6 bg-gray-700 rounded-lg shadow-inner">
+                        <h3 className="text-xl font-semibold text-white mb-4">Claim Player from Free Agency (Waiver Wire)</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <label className="block col-span-full md:col-span-2">
+                                <span className="text-gray-300">Select Player:</span>
+                                <select id="player-select" ref={playerSelectRef} className="w-full p-2 rounded-md bg-gray-600 text-white border border-gray-500 focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Select a player...</option>
+                                    {availablePlayers.length > 0 ? (
+                                        availablePlayers.map(player => (
+                                            <option key={player.id} value={player.id}>{player.name} ({player.position} - {player.nflTeam})</option>
+                                        ))
+                                    ) : (
+                                        <option disabled>No players available</option>
+                                    )}
+                                </select>
+                            </label>
+                             <label className="block">
+                                <span className="text-gray-300">Bid Amount ($)</span>
+                                <input type="number" step="0.5" min="0.5" value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="w-full p-2 rounded-md bg-gray-600 text-white border border-gray-500" />
+                            </label>
+                            <button 
+                                onClick={handlePlaceWaiverBid} 
+                                className="col-span-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={!isAuctionComplete}
+                            >
+                                {isAuctionComplete ? 'Place Bid & Start Auction' : 'Auction Not Complete'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AuthScreen = ({ showMessage }) => {
+            const { auth, db } = useFirebase();
+            const [isLogin, setIsLogin] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [username, setUsername] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleAuthAction = async () => {
+                if (!auth || !db) return showMessage("Firebase not initialized.", "error");
+                
+                // Validation
+                if (!email.trim()) {
+                    showMessage("Email cannot be empty.", "error");
+                    return;
+                }
+                if (!password.trim()) {
+                    showMessage("Password cannot be empty.", "error");
+                    return;
+                }
+                if (!isLogin && !username.trim()) {
+                    showMessage("Name cannot be empty.", "error");
+                    return;
+                }
+                if (password.length < 6) {
+                    showMessage("Password must be at least 6 characters long.", "error");
+                    return;
+                }
+
+                // reCAPTCHA verification
+                const recaptchaToken = grecaptcha.getResponse();
+                if (!recaptchaToken) {
+                    showMessage("Please complete the reCAPTCHA verification.", "error");
+                    return;
+                }
+                
+                setIsLoading(true);
+                try {
+                    if (isLogin) {
+                        await auth.signInWithEmailAndPassword(email, password);
+                        showMessage("Logged in successfully!", "success");
+                    } else {
+                        const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                        const userProfileDocRef = db.doc(`artifacts/${appId}/users/${userCredential.user.uid}/userProfile/settings`);
+                        await userProfileDocRef.set({ username }, { merge: true });
+                        showMessage("Registered successfully!", "success");
+                    }
+                    // Reset reCAPTCHA after successful authentication
+                    grecaptcha.reset();
+                } catch (error) {
+                    console.error("Auth error:", error);
+                    let errorMessage = "An error occurred during authentication.";
+                    
+                    if (error.code === 'auth/email-already-in-use') {
+                        errorMessage = "An account with this email already exists. Please login instead.";
+                    } else if (error.code === 'auth/invalid-email') {
+                        errorMessage = "Please enter a valid email address.";
+                    } else if (error.code === 'auth/weak-password') {
+                        errorMessage = "Password should be at least 6 characters long.";
+                    } else if (error.code === 'auth/user-not-found') {
+                        errorMessage = "No account found with this email. Please register first.";
+                    } else if (error.code === 'auth/wrong-password') {
+                        errorMessage = "Incorrect password. Please try again.";
+                    } else if (error.code === 'auth/too-many-requests') {
+                        errorMessage = "Too many failed attempts. Please try again later.";
+                    } else if (error.message) {
+                        errorMessage = error.message;
+                    }
+                    
+                    showMessage(errorMessage, "error");
+                    // Reset reCAPTCHA on error
+                    grecaptcha.reset();
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-gray-900 p-4">
+                    <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+                        <h2 className="text-3xl font-bold text-white mb-6 text-center">{isLogin ? 'Login' : 'Register'}</h2>
+                        {!isLogin && (
+                            <div className="mb-4">
+                                <input 
+                                    type="text" 
+                                    placeholder="Your Name" 
+                                    value={username} 
+                                    onChange={(e) => setUsername(e.target.value)} 
+                                    className="w-full p-3 rounded-md bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                                />
+                                <p className="text-xs text-gray-400 mt-1">Enter your display name for the app</p>
+                            </div>
+                        )}
+                        <div className="mb-4">
+                            <input 
+                                type="email" 
+                                placeholder="Email" 
+                                value={email} 
+                                onChange={(e) => setEmail(e.target.value)} 
+                                className="w-full p-3 rounded-md bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                            />
+                        </div>
+                        <div className="mb-6">
+                            <input 
+                                type="password" 
+                                placeholder="Password" 
+                                value={password} 
+                                onChange={(e) => setPassword(e.target.value)} 
+                                className="w-full p-3 rounded-md bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                            />
+                            {!isLogin && (
+                                <p className="text-xs text-gray-400 mt-1">Password must be at least 6 characters long</p>
+                            )}
+                        </div>
+                        
+                        {/* reCAPTCHA Widget */}
+                        <div className="mb-6 flex justify-center">
+                            <div className="g-recaptcha" data-sitekey={window.RECAPTCHA_SITE_KEY}></div>
+                        </div>
+                        
+                        <button 
+                            onClick={handleAuthAction} 
+                            disabled={isLoading} 
+                            className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
+                        >
+                            {isLoading ? (
+                                <span className="flex items-center justify-center">
+                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                                    {isLogin ? 'Logging In...' : 'Registering...'}
+                                </span>
+                            ) : (
+                                isLogin ? 'Login' : 'Register'
+                            )}
+                        </button>
+                        <p className="text-center text-gray-400 mt-4">
+                            {isLogin ? "Don't have an account?" : "Already have an account?"}{' '}
+                            <button onClick={() => {
+                                setIsLogin(!isLogin);
+                                grecaptcha.reset();
+                            }} className="text-blue-400 hover:underline font-semibold">
+                                {isLogin ? 'Register' : 'Login'}
+                            </button>
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreated, onCancel }) => {
+            const { db } = useFirebase();
+            const [leagueName, setLeagueName] = useState('');
+            const [numTeams, setNumTeams] = useState(12);
+            const [numWeeks, setNumWeeks] = useState(14);
+            const [playoffWeeks, setPlayoffWeeks] = useState(3);
+            const [teamSalary, setTeamSalary] = useState(1000);
+            const [playersToDrop, setPlayersToDrop] = useState(5);
+            const [salaryRaisePercentage, setSalaryRaisePercentage] = useState(10);
+            const [minPlayerSalary, setMinPlayerSalary] = useState(0.5);
+            const [scoringRules, setScoringRules] = useState(STANDARD_SCORING_RULES);
+            const [rosterLimits, setRosterLimits] = useState(INITIAL_ROSTER_LIMITS);
+            const [divisions, setDivisions] = useState([{ name: 'Division 1' }, { name: 'Division 2' }]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [divisionsEnabled, setDivisionsEnabled] = useState(true);
+
+            const handleScoringChange = (rule, value) => {
+                setScoringRules(prev => ({ ...prev, [rule]: Number(value) }));
+            };
+            
+            const handleDivisionNameChange = (index, name) => {
+                const newDivisions = [...divisions];
+                newDivisions[index].name = name;
+                setDivisions(newDivisions);
+            };
+
+            const addDivision = () => {
+                if (divisions.length < 4) {
+                    setDivisions([...divisions, { name: `Division ${divisions.length + 1}` }]);
+                }
+            };
+
+            const removeDivision = (index) => {
+                if (divisions.length > 2) {
+                    setDivisions(divisions.filter((_, i) => i !== index));
+                }
+            };
+            
+            const handleCreateLeague = async () => {
+                if (!leagueName.trim()) return showMessage("League name cannot be empty.", "error");
+                if (teamSalary > 5000) return showMessage("Team salary cannot exceed 5000.", "error");
+                setIsLoading(true);
+                try {
+                    const newLeagueRef = db.collection("leagues").doc();
+                    const newLeagueId = newLeagueRef.id;
+                    const finalDivisions = divisionsEnabled ? divisions.map(d => d.name.trim()).filter(Boolean) : [];
+
+                    // Generate the initial lineup structure with null values
+                    const initialLineup = {};
+                    Object.entries(DEFAULT_STARTING_SLOTS).forEach(([pos, count]) => {
+                        for (let i = 1; i <= count; i++) {
+                            initialLineup[`${pos}${i}`] = null;
+                        }
+                    });
+
+                    await newLeagueRef.set({
+                        name: leagueName.trim(),
+                        commissionerId: userId,
+                        teams: [],
+                        allRosteredPlayerIds: [],
+                        settings: {
+                            numTeams: Number(numTeams),
+                            numWeeks: Number(numWeeks),
+                            playoffWeeks: Number(playoffWeeks),
+                            teamSalary: Number(teamSalary),
+                            playersToDrop: Number(playersToDrop),
+                            salaryRaisePercentage: Number(salaryRaisePercentage),
+                            minPlayerSalary: Number(minPlayerSalary),
+                            scoringRules: scoringRules,
+                            rosterLimits: rosterLimits, // Bench/IR limits
+                            startingSlots: DEFAULT_STARTING_SLOTS, // Save the structure definition
+                            divisions: finalDivisions,
+                        },
+                        auction: {
+                            status: 'pending'
+                        }
+                    });
+
+                    const commissionerTeamData = {
+                        teamName: `${userDisplayName || 'New User'}'s Team`,
+                        ownerId: userId,
+                        leagueId: newLeagueId,
+                        roster: {
+                            lineup: initialLineup,
+                            bench: [],
+                            ir: []
+                        },
+                        wins: 0, losses: 0, ties: 0,
+                    };
+
+                    if (divisionsEnabled && finalDivisions.length > 0) {
+                        commissionerTeamData.division = finalDivisions[0];
+                    }
+
+                    const newTeamRef = await db.collection(`artifacts/${appId}/public/data/teams`).add(commissionerTeamData);
+
+                    await newLeagueRef.update({
+                        teams: firebase.firestore.FieldValue.arrayUnion(newTeamRef.id)
+                    });
+
+                    showMessage(`League "${leagueName}" created successfully!`, "success");
+                    onLeagueCreated(newLeagueId, newTeamRef.id);
+
+                } catch (error) {
+                    showMessage("Error creating league.", "error");
+                    console.error("Error creating league:", error);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const renderScoringInput = (label, rule) => (
+                <label key={rule} className="block"><span className="text-gray-300">{label}</span><input type="number" step="0.05" value={scoringRules[rule]} onChange={(e) => handleScoringChange(rule, e.target.value)} className="w-full p-2 mt-1 rounded-md bg-gray-600 text-white border border-gray-500"/></label>
+            );
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">Create a New Dynasty League</h2>
+                    
+                    <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                        <h3 className="text-2xl font-semibold mb-4 text-blue-400">General Settings</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                            <label className="block sm:col-span-2 md:col-span-3"><span className="text-gray-300">League Name</span><input type="text" placeholder="Your League's Name" value={leagueName} onChange={e => setLeagueName(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                            <label className="block"><span className="text-gray-300">Number of Teams</span><select value={numTeams} onChange={e => setNumTeams(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white">{[8, 10, 12, 14, 16].map(n => <option key={n} value={n}>{n} Teams</option>)}</select></label>
+                            <label className="block"><span className="text-gray-300">Regular Season Weeks</span><select value={numWeeks} onChange={e => setNumWeeks(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white">{[12, 13, 14, 15].map(n => <option key={n} value={n}>{n} Weeks</option>)}</select></label>
+                            <label className="block"><span className="text-gray-300">Playoff Weeks</span><select value={playoffWeeks} onChange={e => setPlayoffWeeks(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white">{[1, 2, 3, 4].map(n => <option key={n} value={n}>{n} Weeks</option>)}</select></label>
+                            <label className="block"><span className="text-gray-300">Team Salary Cap</span><input type="number" max="5000" value={teamSalary} onChange={e => setTeamSalary(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                            <label className="block"><span className="text-gray-300">Players to Drop</span><input type="number" value={playersToDrop} onChange={e => setPlayersToDrop(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                            <label className="block"><span className="text-gray-300">Salary Raise %</span><input type="number" value={salaryRaisePercentage} onChange={e => setSalaryRaisePercentage(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                            <label className="block"><span className="text-gray-300">Min Player Salary</span><input type="number" value={minPlayerSalary} onChange={e => setMinPlayerSalary(e.target.value)} min="0.5" max="10" step="0.01" className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" /></label>
+                            <div className="sm:col-span-2 md:col-span-3">
+                                <label className="flex items-center space-x-3 cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={divisionsEnabled} 
+                                        onChange={(e) => setDivisionsEnabled(e.target.checked)} 
+                                        className="form-checkbox h-5 w-5 bg-gray-600 border-gray-500 rounded text-blue-500 focus:ring-blue-500"
+                                    />
+                                    <span className="text-gray-300">Enable Divisions</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    {divisionsEnabled && (
+                        <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                            <h3 className="text-2xl font-semibold mb-4 text-yellow-400">Divisions</h3>
+                            <div className="space-y-4">
+                                {divisions.map((division, index) => (
+                                    <div key={index} className="flex items-center gap-4">
+                                        <input type="text" value={division.name} onChange={(e) => handleDivisionNameChange(index, e.target.value)} className="w-full p-2 rounded-md bg-gray-600 text-white" />
+                                        {divisions.length > 2 && <button onClick={() => removeDivision(index)} className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded-md">-</button>}
+                                    </div>
+                                ))}
+                            </div>
+                            {divisions.length < 4 && <button onClick={addDivision} className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md">Add Division</button>}
+                        </div>
+                    )}
+
+                    <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                        <h3 className="text-2xl font-semibold mb-4 text-purple-400">Roster Limits</h3>
+                        <p className="text-sm text-gray-400 mb-4">Set the maximum number of players for non-starter positions.</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                           {Object.keys(rosterLimits).map(pos => (
+                               <label key={pos} className="block"><span className="text-gray-300">{pos}</span><input type="number" value={rosterLimits[pos]} onChange={e => setRosterLimits(prev => ({...prev, [pos]: Number(e.target.value)}))} className="w-full p-2 mt-1 rounded-md bg-gray-600 text-white"/></label>
+                           ))}
+                        </div>
+                    </div>
+
+                    <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                        <h3 className="text-2xl font-semibold mb-4 text-green-400">Scoring Rules</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+                            <div>
+                                <h4 className="text-xl font-bold mb-3 text-gray-200 border-b border-gray-600 pb-2">Offense</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    {renderScoringInput('Passing TD', 'passTd')}
+                                    {renderScoringInput('Rushing TD', 'rushTd')}
+                                    {renderScoringInput('Receiving TD', 'recTd')}
+                                    {renderScoringInput('Return TD', 'returnTd')}
+                                    {renderScoringInput('2-Point Conv.', 'twoPointConversion')}
+                                    {renderScoringInput('Completion', 'completion')}
+                                    {renderScoringInput('Passing Yard', 'passYard')}
+                                    {renderScoringInput('Rush/Rec Yard', 'rushRecYard')}
+                                    {renderScoringInput('Reception (PPR)', 'reception')}
+                                    {renderScoringInput('300+ Pass Yd Bonus', 'pass300YardBonus')}
+                                    {renderScoringInput('400+ Pass Yd Bonus', 'pass400YardBonus')}
+                                    {renderScoringInput('100+ Rush/Rec Yd Bonus', 'rushRec100YardBonus')}
+                                    {renderScoringInput('200+ Rush/Rec Yd Bonus', 'rushRec200YardBonus')}
+                                    {renderScoringInput('Fumble Recovery', 'fumbleRecovery')}
+                                    {renderScoringInput('Sack (QB)', 'sack')}
+                                    {renderScoringInput('Interception (QB)', 'interception')}
+                                    {renderScoringInput('Fumble Lost', 'fumble')}
+                                </div>
+                            </div>
+                            <div>
+                                <h4 className="text-xl font-bold mb-3 text-gray-200 border-b border-gray-600 pb-2">Kicking</h4>
+                                <div className="grid grid-cols-2 gap-4 mb-6">
+                                    {renderScoringInput('Extra Point Made', 'extraPoint')}
+                                    {renderScoringInput('FG Made (0-39 yds)', 'fg39Less')}
+                                    {renderScoringInput('FG Made (40-49 yds)', 'fg40_49')}
+                                    {renderScoringInput('FG Made (50+ yds)', 'fg50Plus')}
+                                    {renderScoringInput('Missed FG/EP', 'missedFgEp')}
+                                </div>
+                                 <h4 className="text-xl font-bold mb-3 text-gray-200 border-b border-gray-600 pb-2">Defense & ST</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    {renderScoringInput('Tackle (Solo)', 'tackle')}
+                                    {renderScoringInput('Assisted Tackle', 'assistedTackle')}
+                                    {renderScoringInput('Tackle for Loss', 'tackleForLoss')}
+                                    {renderScoringInput('Forced Fumble', 'forcedFumble')}
+                                    {renderScoringInput('Fumble Recovery', 'fumbleRecoveryDef')}
+                                    {renderScoringInput('Interception', 'interceptionDef')}
+                                    {renderScoringInput('Pass Defended', 'passDefended')}
+                                    {renderScoringInput('Def/ST TD', 'defensiveStTd')}
+                                    {renderScoringInput('Def/ST Return Yard', 'returnYardDefSt')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="flex justify-end gap-4 mt-8">
+                        <button onClick={onCancel} className="px-8 py-3 bg-gray-600 hover:bg-gray-500 font-bold rounded-md">Cancel</button>
+                        <button onClick={handleCreateLeague} disabled={isLoading} className="px-8 py-3 bg-green-600 hover:bg-green-700 font-bold rounded-md disabled:opacity-50">
+                            {isLoading ? 'Creating...' : 'Create League'}
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueSelected }) => {
+            const { db } = useFirebase();
+            const [joinLeagueId, setJoinLeagueId] = useState('');
+            const [isLoadingJoin, setIsLoadingJoin] = useState(false);
+            const [userLeagues, setUserLeagues] = useState([]);
+            const [isCreatingLeague, setIsCreatingLeague] = useState(false);
+
+            useEffect(() => {
+                if (!db || !userId) return;
+
+                const unsubscribe = db.collection("artifacts").doc(appId).collection("public").doc("data").collection("teams")
+                    .where("ownerId", "==", userId)
+                    .onSnapshot(async (teamSnapshot) => {
+                        const leagueIds = new Set();
+                        teamSnapshot.forEach(doc => {
+                            const teamData = doc.data();
+                            if (teamData.leagueId) leagueIds.add(teamData.leagueId);
+                        });
+
+                        if (leagueIds.size === 0) {
+                            setUserLeagues([]);
+                            return;
+                        }
+
+                        const leagueDocs = await Promise.all(Array.from(leagueIds).map(id => db.doc(`leagues/${id}`).get()));
+                        setUserLeagues(leagueDocs.filter(doc => doc.exists).map(doc => ({ id: doc.id, ...doc.data() })));
+                    }, (error) => {
+                        console.error("Error fetching user's leagues:", error);
+                        showMessage("Error fetching your leagues.", "error");
+                    });
+                return () => unsubscribe();
+            }, [db, userId]);
+
+            const handleJoinLeague = async (leagueIdToJoin) => {
+                if (!leagueIdToJoin.trim()) return showMessage("League ID cannot be empty.", "error");
+                setIsLoadingJoin(true);
+                
+                const leagueDocRef = db.doc(`leagues/${leagueIdToJoin}`);
+                const teamsCollectionRef = db.collection(`artifacts/${appId}/public/data/teams`);
+
+                try {
+                    const leagueDoc = await leagueDocRef.get();
+                    if (!leagueDoc.exists) {
+                        showMessage("League not found.", "error");
+                        setIsLoadingJoin(false);
+                        return;
+                    }
+                    const leagueData = leagueDoc.data();
+                    const existingTeamQuery = await teamsCollectionRef.where("ownerId", "==", userId).where("leagueId", "==", leagueIdToJoin).get();
+
+                    if (!existingTeamQuery.empty) {
+                        const existingTeamId = existingTeamQuery.docs[0].id;
+                        showMessage("You already have a team in this league. Entering now.", "info");
+                        onLeagueSelected(leagueIdToJoin, existingTeamId);
+                        return;
+                    }
+
+                    // Assign to a division round-robin style if divisions exist
+                    const divisions = leagueData.settings.divisions || [];
+                    let assignedDivision = null;
+                    if (divisions.length > 0) {
+                        const divisionIndex = leagueData.teams.length % divisions.length;
+                        assignedDivision = divisions[divisionIndex];
+                    }
+
+                    const initialLineup = {};
+                    const startingSlots = leagueData.settings.startingSlots || DEFAULT_STARTING_SLOTS;
+                    Object.entries(startingSlots).forEach(([pos, count]) => {
+                        for (let i = 1; i <= count; i++) {
+                            initialLineup[`${pos}${i}`] = null;
+                        }
+                    });
+
+                    const newTeamData = {
+                        teamName: `${userDisplayName || 'New User'}'s Team`,
+                        ownerId: userId,
+                        leagueId: leagueIdToJoin,
+                        roster: {
+                            lineup: initialLineup,
+                            bench: [],
+                            ir: []
+                        },
+                        wins: 0, losses: 0, ties: 0,
+                    };
+                    if (assignedDivision) {
+                        newTeamData.division = assignedDivision;
+                    }
+
+                    const newTeamRef = await teamsCollectionRef.add(newTeamData);
+
+                    await leagueDocRef.update({
+                        teams: firebase.firestore.FieldValue.arrayUnion(newTeamRef.id)
+                    });
+
+                    showMessage(`Successfully joined league "${leagueData.name}"!`, "success");
+                    onLeagueSelected(leagueIdToJoin, newTeamRef.id);
+
+                } catch (error) {
+                    showMessage("Error joining league.", "error");
+                    console.error(error);
+                } finally {
+                    setIsLoadingJoin(false);
+                }
+            };
+            
+            if (isCreatingLeague) {
+                return <CreateLeagueForm 
+                    userId={userId}
+                    userDisplayName={userDisplayName}
+                    showMessage={showMessage}
+                    onLeagueCreated={onLeagueSelected} 
+                    onCancel={() => setIsCreatingLeague(false)} 
+                />;
+            }
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">League Management</h2>
+                    
+                    {userLeagues.length > 0 && (
+                        <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                            <h3 className="text-2xl font-semibold mb-4">Your Leagues</h3>
+                            <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {userLeagues.map(league => (
+                                    <li key={league.id} className="bg-gray-600 p-4 rounded-md flex justify-between items-center">
+                                        <div className="flex-1 overflow-hidden mr-2">
+                                            <p className="font-semibold truncate">{league.name}</p>
+                                            <p className="text-xs text-gray-400 truncate">ID: {league.id}</p>
+                                        </div>
+                                        <button onClick={() => handleJoinLeague(league.id)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 font-semibold rounded-md flex-shrink-0">Enter</button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="p-6 bg-gray-700 rounded-lg flex flex-col justify-center items-center">
+                            <h3 className="text-2xl font-semibold mb-4 text-center">Start a New League</h3>
+                            <button onClick={() => setIsCreatingLeague(true)} className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 font-bold rounded-md">
+                                Create a League
+                            </button>
+                        </div>
+                        <div className="p-6 bg-gray-700 rounded-lg">
+                            <h3 className="text-2xl font-semibold mb-4 text-center">Join Existing League</h3>
+                            <input type="text" placeholder="Enter League ID" value={joinLeagueId} onChange={e => setJoinLeagueId(e.target.value)} className="w-full p-3 mb-4 rounded-md bg-gray-600 text-white" />
+                            <button onClick={() => handleJoinLeague(joinLeagueId)} disabled={isLoadingJoin} className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 font-bold rounded-md disabled:opacity-50">
+                                {isLoadingJoin ? 'Joining...' : 'Join League'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Standings = ({ currentLeague, showMessage, db, userId, teamsData }) => {
+            const [activeSubTab, setActiveSubTab] = useState('standings');
+            const [leagueTeams, setLeagueTeams] = useState(teamsData);
+            const [isSimulating, setIsSimulating] = useState(false);
+            const [viewWeek, setViewWeek] = useState(1);
+            const isCommissioner = currentLeague.commissionerId === userId;
+            const divisions = currentLeague?.settings?.divisions || [];
+            const defaultAvatar = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg==";
+            const teamsMap = useMemo(() => teamsData.reduce((acc, team) => {
+                acc[team.id] = team;
+                return acc;
+            }, {}), [teamsData]);
+
+            useEffect(() => {
+                setLeagueTeams(teamsData);
+            }, [teamsData]);
+
+            const onSimulateWeek = async () => {
+                if (!currentLeague || !currentLeague.teams || currentLeague.teams.length === 0) {
+                    return showMessage("No teams in the league to simulate.", "error");
+                }
+                
+                setIsSimulating(true);
+                const batch = db.batch();
+                for (const teamId of currentLeague.teams) {
+                    const teamDocRef = db.doc(`artifacts/${appId}/public/data/teams/${teamId}`);
+                    const outcome = Math.random();
+                    if (outcome < 0.4) batch.update(teamDocRef, { wins: firebase.firestore.FieldValue.increment(1) });
+                    else if (outcome < 0.8) batch.update(teamDocRef, { losses: firebase.firestore.FieldValue.increment(1) });
+                    else batch.update(teamDocRef, { ties: firebase.firestore.FieldValue.increment(1) });
+                }
+
+                try {
+                    await batch.commit();
+                    showMessage("League week simulated!", "success");
+                } catch (error) {
+                    showMessage("Error simulating week.", "error");
+                    console.error("Simulation error:", error);
+                } finally {
+                    setIsSimulating(false);
+                }
+            };
+
+            const generateSchedule = async () => {
+                const teamIds = [...currentLeague.teams];
+                const numTeams = teamIds.length;
+                const numWeeks = currentLeague.settings.numWeeks;
+
+                if (numTeams < 2) {
+                    return showMessage("Need at least 2 teams to generate a schedule.", "error");
+                }
+                
+                setIsSimulating(true); // Reuse simulating state for loading indicator
+
+                if (numTeams % 2 !== 0) {
+                    teamIds.push("BYE");
+                }
+
+                const teamsCount = teamIds.length;
+                const rounds = teamsCount - 1;
+                const generatedSchedule = [];
+                const rotatingTeams = teamIds.slice(1);
+
+                for (let week = 0; week < numWeeks; week++) {
+                    const weeklyMatchups = [];
+                    const firstTeam = teamIds[0];
+                    
+                    const matchup = { home: firstTeam, away: rotatingTeams[0] };
+                    if (matchup.home !== "BYE" && matchup.away !== "BYE") {
+                        weeklyMatchups.push(matchup);
+                    }
+
+                    for (let i = 1; i < teamsCount / 2; i++) {
+                        const matchup = { home: rotatingTeams[i], away: rotatingTeams[teamsCount - 1 - i] };
+                         if (matchup.home !== "BYE" && matchup.away !== "BYE") {
+                            weeklyMatchups.push(matchup);
+                        }
+                    }
+                    
+                    generatedSchedule.push(weeklyMatchups);
+
+                    // Rotate the array for the next week
+                    rotatingTeams.push(rotatingTeams.shift());
+                }
+
+                try {
+                    await db.doc(`leagues/${currentLeague.id}`).update({ schedule: generatedSchedule });
+                    showMessage("Schedule generated successfully!", "success");
+                } catch (error) {
+                    console.error("Error saving schedule:", error);
+                    showMessage("Failed to save the schedule.", "error");
+                } finally {
+                    setIsSimulating(false);
+                }
+            };
+        
+            const renderDivisionTable = (divisionName) => {
+                const teamsInDivision = leagueTeams
+                    .filter(team => team.division === divisionName || (!team.division && divisionName === 'Overall Standings'))
+                    .sort((a, b) => (b.wins || 0) - (a.wins || 0));
+
+                if (teamsInDivision.length === 0 && divisionName !== 'Overall Standings') return null;
+
+                return (
+                    <div key={divisionName} className="mb-8">
+                        <h3 className="text-2xl font-bold text-blue-400 mb-4">{divisionName}</h3>
+                         <div className="overflow-x-auto">
+                            <table className="min-w-full bg-gray-700 rounded-lg shadow-md">
+                                <thead>
+                                    <tr className="bg-gray-600 text-left text-gray-300 uppercase text-sm leading-normal">
+                                        <th className="py-3 px-6 text-left">Team Name</th>
+                                        <th className="py-3 px-6 text-center">Wins</th>
+                                        <th className="py-3 px-6 text-center">Losses</th>
+                                        <th className="py-3 px-6 text-center">Ties</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-gray-200 text-sm font-light">
+                                    {teamsInDivision.map(team => (
+                                        <tr key={team.id} className="border-b border-gray-600 hover:bg-gray-600">
+                                            <td className="py-3 px-6 text-left whitespace-nowrap">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={team.avatarUrl || defaultAvatar} alt="Team Avatar" className="w-8 h-8 rounded-full object-cover"/>
+                                                    <span>{team.teamName}</span>
+                                                </div>
+                                            </td>
+                                            <td className="py-3 px-6 text-center">{team.wins || 0}</td>
+                                            <td className="py-3 px-6 text-center">{team.losses || 0}</td>
+                                            <td className="py-3 px-6 text-center">{team.ties || 0}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                );
+            };
+            
+            const renderSchedule = () => {
+                const schedule = currentLeague.schedule;
+                if (!schedule || schedule.length === 0) {
+                    return <p className="text-center text-gray-400">The schedule has not been generated yet.</p>;
+                }
+                const totalWeeks = schedule.length;
+                const matchupsForWeek = schedule[viewWeek - 1] || [];
+                
+                const teamsInMatchups = matchupsForWeek.flatMap(m => [m.home, m.away]);
+                const allTeamIds = currentLeague.teams;
+                const teamsWithBye = allTeamIds.filter(id => !teamsInMatchups.includes(id));
+
+                return (
+                    <div>
+                        <div className="flex items-center justify-center gap-4 mb-6">
+                            <button onClick={() => setViewWeek(w => Math.max(1, w - 1))} disabled={viewWeek === 1} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md disabled:opacity-50">&lt; Prev</button>
+                            <span className="text-xl font-bold w-24 text-center">Week {viewWeek}</span>
+                            <button onClick={() => setViewWeek(w => Math.min(totalWeeks, w + 1))} disabled={viewWeek === totalWeeks} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-md disabled:opacity-50">Next &gt;</button>
+                        </div>
+
+                        <div className="space-y-4">
+                            {matchupsForWeek.map((matchup, index) => {
+                                const homeTeam = teamsMap[matchup.home];
+                                const awayTeam = teamsMap[matchup.away];
+                                if (!homeTeam || !awayTeam) return null;
+                                return (
+                                    <div key={index} className="bg-gray-700 p-4 rounded-lg flex items-center justify-center gap-4 text-center">
+                                        <div className="flex-1 flex items-center gap-3 justify-end">
+                                            <span className="font-semibold text-lg text-right">{awayTeam.teamName}</span>
+                                            <img src={awayTeam.avatarUrl || defaultAvatar} alt="Away Team Avatar" className="w-10 h-10 rounded-full" />
+                                        </div>
+                                        <span className="text-gray-400 font-bold">@</span>
+                                        <div className="flex-1 flex items-center gap-3">
+                                            <img src={homeTeam.avatarUrl || defaultAvatar} alt="Home Team Avatar" className="w-10 h-10 rounded-full" />
+                                            <span className="font-semibold text-lg text-left">{homeTeam.teamName}</span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {teamsWithBye.map(teamId => {
+                                const byeTeam = teamsMap[teamId];
+                                if (!byeTeam) return null;
+                                return (
+                                     <div key={teamId} className="bg-gray-700/50 p-4 rounded-lg text-center">
+                                        <span className="font-semibold text-lg text-gray-400">{byeTeam.teamName} has a bye week.</span>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                    <div className="flex border-b border-gray-600 mb-6">
+                        <button onClick={() => setActiveSubTab('standings')} className={`px-4 sm:px-6 py-3 font-semibold ${activeSubTab === 'standings' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-400'}`}>Standings</button>
+                        <button onClick={() => setActiveSubTab('schedule')} className={`px-4 sm:px-6 py-3 font-semibold ${activeSubTab === 'schedule' ? 'border-b-2 border-blue-400 text-white' : 'text-gray-400'}`}>Schedule</button>
+                    </div>
+
+                    {activeSubTab === 'standings' && (
+                        <>
+                            <h2 className="text-3xl font-bold text-white mb-6 text-center">League Standings</h2>
+                            {leagueTeams.length > 0 ? (
+                                divisions.length > 0 ? (
+                                    divisions.map(divName => renderDivisionTable(divName))
+                                ) : (
+                                    renderDivisionTable('Overall Standings') // Fallback for leagues without divisions
+                                )
+                            ) : (
+                                <p className="text-center text-gray-400">No teams in this league yet.</p>
+                            )}
+                            <div className="text-center mt-6">
+                                <button onClick={onSimulateWeek} disabled={isSimulating || !currentLeague?.teams || currentLeague.teams.length === 0} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 font-bold rounded-md disabled:opacity-50 disabled:cursor-not-allowed">
+                                    {isSimulating ? 'Simulating...' : 'Simulate Week'}
+                                </button>
+                            </div>
+                        </>
+                    )}
+
+                    {activeSubTab === 'schedule' && (
+                        <>
+                            <h2 className="text-3xl font-bold text-white mb-6 text-center">League Schedule</h2>
+                            {isCommissioner && !currentLeague.schedule && (
+                                <div className="text-center mb-6 p-6 bg-gray-700 rounded-lg">
+                                    <p className="mb-4">The league schedule has not been generated.</p>
+                                    <button onClick={generateSchedule} disabled={isSimulating} className="px-6 py-3 bg-green-600 hover:bg-green-700 font-bold rounded-md disabled:opacity-50">
+                                        {isSimulating ? 'Generating...' : 'Generate Schedule'}
+                                    </button>
+                                </div>
+                            )}
+                            {currentLeague.schedule && renderSchedule()}
+                        </>
+                    )}
+                </div>
+            );
+        };
+        
+        const Auction = ({ currentLeague, userId, db, showMessage, teamsData }) => {
+            const [auctionDateTime, setAuctionDateTime] = useState('');
+            const isCommissioner = currentLeague.commissionerId === userId;
+
+            const handleSetAuctionTime = async () => {
+                if (!auctionDateTime) return showMessage("Please select a date and time.", "error");
+                const leagueDocRef = db.doc(`leagues/${currentLeague.id}`);
+                try {
+                    await leagueDocRef.set({
+                        auction: {
+                            auctionTime: auctionDateTime,
+                            status: 'scheduled'
+                        }
+                    }, { merge: true });
+                    showMessage("Auction time has been set!", "success");
+                } catch (error) {
+                    showMessage("Failed to set auction time.", "error");
+                    console.error("Error setting auction time:", error);
+                }
+            };
+
+            const handleRandomizeOrder = async () => {
+                const teamIds = currentLeague.teams;
+                const shuffledTeamIds = shuffleArray([...teamIds]);
+                const leagueDocRef = db.doc(`leagues/${currentLeague.id}`);
+                try {
+                    await leagueDocRef.set({
+                        auction: {
+                            nominationOrder: shuffledTeamIds
+                        }
+                    }, { merge: true });
+                    showMessage("Nomination order has been randomized!", "success");
+                } catch (error) {
+                    showMessage("Failed to set nomination order.", "error");
+                    console.error("Error randomizing order:", error);
+                }
+            };
+            
+            const handleClearAuction = async () => {
+                 const leagueDocRef = db.doc(`leagues/${currentLeague.id}`);
+                 try {
+                     await leagueDocRef.update({
+                         "auction.auctionTime": firebase.firestore.FieldValue.delete(),
+                         "auction.nominationOrder": firebase.firestore.FieldValue.delete(),
+                         "auction.status": "pending",
+                     });
+                     showMessage("Auction settings cleared.", "success");
+                 } catch(error) {
+                     showMessage("Failed to clear auction settings.", "error");
+                 }
+            };
+
+            const handleStartAuction = async () => {
+                const leagueDocRef = db.doc(`leagues/${currentLeague.id}`);
+                try {
+                    await leagueDocRef.update({ "auction.status": "live" });
+                    showMessage("Auction has started!", "success");
+                } catch(error) {
+                    showMessage("Failed to start auction.", "error");
+                }
+            };
+
+            const nominationOrder = currentLeague.auction?.nominationOrder;
+            const orderedTeams = nominationOrder?.map(teamId => teamsData.find(t => t.id === teamId)).filter(Boolean);
+
+            if (currentLeague.auction?.status === 'live') {
+                return <LiveAuction currentLeague={currentLeague} userId={userId} db={db} showMessage={showMessage} teamsData={teamsData} allPlayers={mockPlayers} />;
+            }
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">Auction Setup</h2>
+
+                    {isCommissioner && (
+                        <div className="mb-8 p-4 sm:p-6 bg-gray-700 rounded-lg">
+                            <h3 className="text-2xl font-semibold mb-4 text-blue-400">Commissioner Controls</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+                                <label className="block">
+                                    <span className="text-gray-300">Set Auction Date & Time</span>
+                                    <input type="datetime-local" onChange={e => setAuctionDateTime(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-600 text-white" />
+                                </label>
+                                <button onClick={handleSetAuctionTime} className="px-6 py-3 bg-green-600 hover:bg-green-700 font-bold rounded-md">Set Time</button>
+                            </div>
+                            <div className="mt-6 flex flex-col sm:flex-row gap-4">
+                                <button onClick={handleRandomizeOrder} className="flex-1 px-6 py-3 bg-purple-600 hover:bg-purple-700 font-bold rounded-md">Randomize Nomination Order</button>
+                                <button onClick={handleClearAuction} className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-700 font-bold rounded-md">Clear Auction Settings</button>
+                            </div>
+                             <div className="mt-6">
+                                <button onClick={handleStartAuction} disabled={!currentLeague.auction?.auctionTime || !nominationOrder} className="w-full px-6 py-4 bg-green-700 hover:bg-green-800 text-xl font-bold rounded-md disabled:opacity-50 disabled:cursor-not-allowed">
+                                    Start Auction
+                                </button>
+                             </div>
+                        </div>
+                    )}
+
+                    <div className="p-4 sm:p-6 bg-gray-700 rounded-lg">
+                        <h3 className="text-2xl font-semibold mb-4 text-green-400">Auction Details</h3>
+                        <div className="mb-4">
+                            <h4 className="text-xl font-bold">Auction Time</h4>
+                            {currentLeague.auction?.auctionTime ? 
+                                <p className="text-lg text-gray-300">{new Date(currentLeague.auction.auctionTime).toLocaleString()}</p> :
+                                <p className="text-gray-400">Not set by commissioner yet.</p>
+                            }
+                        </div>
+                        <div>
+                            <h4 className="text-xl font-bold">Nomination Order</h4>
+                            {orderedTeams && orderedTeams.length > 0 ? (
+                                <ol className="list-decimal list-inside text-lg text-gray-300 mt-2 space-y-1">
+                                    {orderedTeams.map((team, index) => (
+                                        <li key={team.id} className="flex items-center gap-2">
+                                            <span>{index + 1}.</span>
+                                            <img src={team.avatarUrl || "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI0EwQUVCQiI+PHBhdGggZD0iTTEyIDJDNi44OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MxLjY2IDAgMyAxLjM0IDMgM3MtMS4zNCAzLTMgMy0zLTEuMzQtMy0zIDEuMzQtMyAzLTN6bTAgMTRjLTIuMDMgMC0zLjg0LS44Ny01LjE5LTIuMzJDOC4wMSAxNi4wMSA5LjkyIDE1IDEyIDE1czMuOTkgMS4wMSA1LjE5IDIuNjljLTEuMzYgMS40NC0zLjE2IDIuMzEtNS4xOSAyLjMxeiIvPjwvc3ZnPg=="} alt="Team Avatar" className="w-6 h-6 rounded-full object-cover"/>
+                                            <span>{team.teamName}</span>
+                                        </li>
+                                    ))}
+                                </ol>
+                            ) : (
+                                 <p className="text-gray-400">Not randomized by commissioner yet.</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        const LiveAuction = ({ currentLeague, userId, db, showMessage, teamsData, allPlayers }) => {
+            const isCommissioner = currentLeague.commissionerId === userId;
+            const [draftData, setDraftData] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [currentBid, setCurrentBid] = useState(1);
+            const [selectedPlayer, setSelectedPlayer] = useState('');
+            const [auctionTimer, setAuctionTimer] = useState(20);
+            const [timerActive, setTimerActive] = useState(false);
+            const [nominatingTeam, setNominatingTeam] = useState(null);
+            const [standardDraftTimer, setStandardDraftTimer] = useState(45);
+            const [standardTimerActive, setStandardTimerActive] = useState(false);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [searchResults, setSearchResults] = useState([]);
+            const [isSearching, setIsSearching] = useState(false);
+            const [allNFLPlayers, setAllNFLPlayers] = useState([]);
+
+            // API functions for NFL player data
+            const searchNFLPlayers = async (query) => {
+                if (!query || query.length < 2) {
+                    setSearchResults([]);
+                    return;
+                }
+
+                setIsSearching(true);
+                try {
+                    if (window.apiService) {
+                        const results = await window.apiService.getESPNPlayerSearch(query);
+                        const players = results.athletes?.map(player => ({
+                            id: player.id,
+                            name: player.fullName,
+                            position: player.position?.abbreviation || 'N/A',
+                            nflTeam: player.team?.abbreviation || 'N/A',
+                            salary: 0,
+                            rank: 0,
+                            jerseyNumber: player.jersey,
+                            age: player.age,
+                            status: player.status?.description || 'Active'
+                        })) || [];
+                        
+                        setSearchResults(players);
+                    } else {
+                        // Fallback to mock data if API not available
+                        const filteredPlayers = allPlayers.filter(player =>
+                            player.name.toLowerCase().includes(query.toLowerCase()) ||
+                            player.nflTeam.toLowerCase().includes(query.toLowerCase())
+                        );
+                        setSearchResults(filteredPlayers);
+                    }
+                } catch (error) {
+                    console.error('Error searching players:', error);
+                    // Fallback to mock data
+                    const filteredPlayers = allPlayers.filter(player =>
+                        player.name.toLowerCase().includes(query.toLowerCase()) ||
+                        player.nflTeam.toLowerCase().includes(query.toLowerCase())
+                    );
+                    setSearchResults(filteredPlayers);
+                } finally {
+                    setIsSearching(false);
+                }
+            };
+
+            const loadAllNFLPlayers = async () => {
+                try {
+                    if (window.apiService) {
+                        // Get all teams first
+                        const teams = await window.apiService.getESPNTeams();
+                        const allPlayers = [];
+                        
+                        // Get roster for each team
+                        for (const team of teams.sports[0].leagues[0].teams) {
+                            const roster = await window.apiService.getESPNTeamRoster(team.team.id);
+                            const players = roster.athletes?.map(player => ({
+                                id: player.id,
+                                name: player.fullName,
+                                position: player.position?.abbreviation || 'N/A',
+                                nflTeam: player.team?.abbreviation || 'N/A',
+                                salary: 0,
+                                rank: 0,
+                                jerseyNumber: player.jersey,
+                                age: player.age,
+                                status: player.status?.description || 'Active'
+                            })) || [];
+                            
+                            allPlayers.push(...players);
+                        }
+                        
+                        setAllNFLPlayers(allPlayers);
+                    }
+                } catch (error) {
+                    console.error('Error loading NFL players:', error);
+                    // Fallback to mock data
+                    setAllNFLPlayers(allPlayers);
+                }
+            };
+
+            // Timer effect for auction
+            useEffect(() => {
+                let interval;
+                if (timerActive && auctionTimer > 0) {
+                    interval = setInterval(() => {
+                        setAuctionTimer(prev => {
+                            if (prev <= 1) {
+                                setTimerActive(false);
+                                // Auto-award player if timer runs out
+                                if (draftData?.currentPlayer && draftData?.currentBidder) {
+                                    handleAwardPlayer();
+                                }
+                                return 0;
+                            }
+                            return prev - 1;
+                        });
+                    }, 1000);
+                }
+                return () => clearInterval(interval);
+            }, [timerActive, auctionTimer, draftData]);
+
+            // Reset timer when new player is nominated
+            useEffect(() => {
+                if (draftData?.currentPlayer && draftData?.status === 'live') {
+                    setAuctionTimer(20);
+                    setTimerActive(true);
+                } else {
+                    setTimerActive(false);
+                    setAuctionTimer(20);
+                }
+            }, [draftData?.currentPlayer]);
+
+            // Load NFL players on component mount
+            useEffect(() => {
+                loadAllNFLPlayers();
+            }, []);
+
+            // Search players when query changes
+            useEffect(() => {
+                const timeoutId = setTimeout(() => {
+                    if (searchQuery) {
+                        searchNFLPlayers(searchQuery);
+                    } else {
+                        setSearchResults([]);
+                    }
+                }, 300);
+
+                return () => clearTimeout(timeoutId);
+            }, [searchQuery]);
+
+            // Fetch draft data
+            useEffect(() => {
+                if (!currentLeague?.id || !db) {
+                    setIsLoading(false);
+                    return;
+                }
+
+                const draftRef = db.doc(`leagues/${currentLeague.id}/draft/current`);
+                const unsubscribe = draftRef.onSnapshot(
+                    (doc) => {
+                        if (doc.exists) {
+                            setDraftData(doc.data());
+                        } else {
+                            setDraftData(null);
+                            // Create the draft document if it doesn't exist
+                            draftRef.set({
+                                type: 'auction',
+                                status: 'pending',
+                                currentPlayer: null,
+                                currentBid: 0,
+                                currentBidder: null,
+                                bidders: [],
+                                availablePlayers: [],
+                                draftedPlayers: [],
+                                createdAt: new Date(),
+                                lastActivity: new Date()
+                            }).catch(error => {
+                                console.error("Error creating initial draft document:", error);
+                            });
+                        }
+                        setIsLoading(false);
+                    },
+                    (error) => {
+                        console.error("Error fetching draft data:", error);
+                        showMessage("Failed to load draft data.", "error");
+                        setIsLoading(false);
+                    }
+                );
+
+                return () => unsubscribe();
+            }, [currentLeague?.id, db, showMessage]);
+
+            // Handle starting auction
+            const handleStartAuction = async () => {
+                if (!isCommissioner) {
+                    return showMessage("Only the commissioner can start the auction.", "error");
+                }
+
+                if (!db) {
+                    return showMessage("Database connection not available.", "error");
+                }
+
+                try {
+                    const draftRef = db.doc(`leagues/${currentLeague.id}/draft/current`);
+                    await draftRef.set({
+                        type: 'auction',
+                        status: 'live',
+                        currentPlayer: null,
+                        currentBid: 0,
+                        currentBidder: null,
+                        bidders: [],
+                        availablePlayers: allPlayers.map(p => p.id),
+                        draftedPlayers: [],
+                        startTime: new Date(),
+                        lastActivity: new Date()
+                    });
+
+                    showMessage("Auction draft started!", "success");
+                } catch (error) {
+                    console.error("Error starting auction:", error);
+                    showMessage("Failed to start auction.", "error");
+                }
+            };
+
+            // Handle nominating player
+            const handleNominatePlayer = async () => {
+                if (!selectedPlayer) {
+                    return showMessage("Please select a player to nominate.", "error");
+                }
+
+                if (!db) {
+                    return showMessage("Database connection not available.", "error");
+                }
+
+                try {
+                    const draftRef = db.doc(`leagues/${currentLeague.id}/draft/current`);
+                    await draftRef.update({
+                        currentPlayer: selectedPlayer,
+                        currentBid: 1,
+                        currentBidder: userId,
+                        bidders: [userId],
+                        nominatingTeam: userId,
+                        lastActivity: new Date()
+                    });
+
+                    setSelectedPlayer('');
+                    setNominatingTeam(userId);
+                    showMessage("Player nominated for auction!", "success");
+                } catch (error) {
+                    console.error("Error nominating player:", error);
+                    showMessage("Failed to nominate player.", "error");
+                }
+            };
+
+            // Handle placing bid
+            const handlePlaceBid = async () => {
+                if (!draftData?.currentPlayer) {
+                    return showMessage("No player is currently up for auction.", "error");
+                }
+
+                if (currentBid <= draftData.currentBid) {
+                    return showMessage("Bid must be higher than current bid.", "error");
+                }
+
+                if (!db) {
+                    return showMessage("Database connection not available.", "error");
+                }
+
+                try {
+                    const draftRef = db.doc(`leagues/${currentLeague.id}/draft/current`);
+                    await draftRef.update({
+                        currentBid: currentBid,
+                        currentBidder: userId,
+                        bidders: [...(draftData.bidders || []), userId],
+                        lastActivity: new Date()
+                    });
+
+                    // Reset timer for new bid
+                    setAuctionTimer(20);
+                    setTimerActive(true);
+
+                    setCurrentBid(currentBid + 1);
+                    showMessage(`Bid placed: $${currentBid}`, "success");
+                } catch (error) {
+                    console.error("Error placing bid:", error);
+                    showMessage("Failed to place bid.", "error");
+                }
+            };
+
+            // Handle awarding player
+            const handleAwardPlayer = async () => {
+                if (!draftData?.currentPlayer || !draftData?.currentBidder) {
+                    return showMessage("No player to award.", "error");
+                }
+
+                if (!db) {
+                    return showMessage("Database connection not available.", "error");
+                }
+
+                try {
+                    const batch = db.batch();
+                    const draftRef = db.doc(`leagues/${currentLeague.id}/draft/current`);
+                    
+                    // Add player to team roster
+                    const teamRef = db.doc(`artifacts/${appId}/public/data/teams/${draftData.currentBidder}`);
+                    const teamDoc = await teamRef.get();
+                    const teamData = teamDoc.data();
+                    
+                    const newRoster = { ...teamData.roster };
+                    newRoster.bench = [...(newRoster.bench || []), draftData.currentPlayer];
+                    
+                    batch.update(teamRef, { roster: newRoster });
+                    
+                    // Update draft data
+                    const updatedDraftedPlayers = [...(draftData.draftedPlayers || []), {
+                        playerId: draftData.currentPlayer,
+                        teamId: draftData.currentBidder,
+                        bid: draftData.currentBid,
+                        timestamp: new Date()
+                    }];
+                    
+                    const updatedAvailablePlayers = (draftData.availablePlayers || []).filter(
+                        p => p !== draftData.currentPlayer
+                    );
+                    
+                    batch.update(draftRef, {
+                        currentPlayer: null,
+                        currentBid: 0,
+                        currentBidder: null,
+                        bidders: [],
+                        nominatingTeam: null,
+                        draftedPlayers: updatedDraftedPlayers,
+                        availablePlayers: updatedAvailablePlayers,
+                        lastActivity: new Date()
+                    });
+                    
+                    await batch.commit();
+                    setNominatingTeam(null);
+                    setTimerActive(false);
+                    setAuctionTimer(20);
+                    showMessage("Player awarded successfully!", "success");
+                } catch (error) {
+                    console.error("Error awarding player:", error);
+                    showMessage("Failed to award player.", "error");
+                }
+            };
+
+            // Handle ending auction
+            const handleEndAuction = async () => {
+                if (!isCommissioner) {
+                    return showMessage("Only the commissioner can end the auction.", "error");
+                }
+
+                if (!db) {
+                    return showMessage("Database connection not available.", "error");
+                }
+
+                try {
+                    const batch = db.batch();
+                    const draftRef = db.doc(`leagues/${currentLeague.id}/draft/current`);
+                    const leagueRef = db.doc(`leagues/${currentLeague.id}`);
+                    
+                    batch.update(draftRef, {
+                        status: 'complete',
+                        endTime: new Date()
+                    });
+                    
+                    batch.update(leagueRef, {
+                        'auction.status': 'complete'
+                    });
+                    
+                    await batch.commit();
+                    showMessage("Auction completed!", "success");
+                } catch (error) {
+                    console.error("Error ending auction:", error);
+                    showMessage("Failed to end auction.", "error");
+                }
+            };
+
+            const isAuctionDraft = true; // This is always an auction
+            const isDraftActive = draftData?.status === 'live';
+
+            if (isLoading) {
+                return (
+                    <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-7xl mx-auto my-8 text-white">
+                        <div className="flex items-center justify-center h-64">
+                            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                            <span className="ml-4 text-lg">Loading auction data...</span>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-7xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">Live Auction</h2>
+                    
+                    {/* Auction Status */}
+                    <div className="mb-6 p-4 bg-gray-700 rounded-lg">
+                        <h3 className="text-xl font-semibold mb-2">Auction Status</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-gray-600 p-3 rounded">
+                                <span className="text-gray-300">Type:</span>
+                                <span className="ml-2 font-semibold">Auction</span>
+                            </div>
+                            <div className="bg-gray-600 p-3 rounded">
+                                <span className="text-gray-300">Status:</span>
+                                <span className={`ml-2 font-semibold ${isDraftActive ? 'text-green-400' : 'text-yellow-400'}`}>
+                                    {isDraftActive ? 'Live' : 'Not Started'}
+                                </span>
+                            </div>
+                            <div className="bg-gray-600 p-3 rounded">
+                                <span className="text-gray-300">Available Players:</span>
+                                <span className="ml-2 font-semibold">{allPlayers.length}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Commissioner Controls */}
+                    {isCommissioner && !isDraftActive && (
+                        <div className="mb-6 p-4 bg-blue-900/20 border border-blue-500 rounded-lg">
+                            <h3 className="text-xl font-semibold mb-4 text-blue-400">Commissioner Controls</h3>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={handleStartAuction}
+                                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md"
+                                >
+                                    Start Auction
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Active Auction Interface */}
+                    {isDraftActive && (
+                        <div className="space-y-6">
+                            {/* Current Player/Status */}
+                            {draftData.currentPlayer && (
+                                <div className="p-4 bg-gray-700 rounded-lg">
+                                    <h3 className="text-xl font-semibold mb-2">Current Player</h3>
+                                    <div className="bg-gray-600 p-3 rounded">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-lg font-semibold">
+                                                {getPlayerDetails(draftData.currentPlayer, allPlayers)?.name}
+                                            </span>
+                                            {timerActive && (
+                                                <div className={`text-2xl font-bold ${auctionTimer <= 5 ? 'text-red-400' : 'text-green-400'}`}>
+                                                    {auctionTimer}s
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="mt-2">
+                                            <span className="text-gray-300">Current Bid: </span>
+                                            <span className="font-semibold text-green-400">${draftData.currentBid}</span>
+                                            {draftData.currentBidder && (
+                                                <span className="ml-4 text-gray-300">
+                                                    by {teamsData.find(t => t.id === draftData.currentBidder)?.teamName || 'Unknown Team'}
+                                                </span>
+                                            )}
+                                            {draftData.nominatingTeam && (
+                                                <div className="mt-1 text-sm text-blue-300">
+                                                    Nominated by: {teamsData.find(t => t.id === draftData.nominatingTeam)?.teamName || 'Unknown Team'}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Auction Actions */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Player Selection */}
+                                <div className="p-4 bg-gray-700 rounded-lg">
+                                    <h3 className="text-lg font-semibold mb-3">Search & Select Player</h3>
+                                    
+                                    {/* Search Input */}
+                                    <div className="mb-4">
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            placeholder="Search for any NFL player..."
+                                            className="w-full p-3 bg-gray-600 text-white rounded-md border border-gray-500"
+                                        />
+                                        {isSearching && (
+                                            <div className="mt-2 text-sm text-blue-300">
+                                                Searching NFL players...
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Search Results */}
+                                    {searchResults.length > 0 && (
+                                        <div className="mb-4 max-h-60 overflow-y-auto">
+                                            <h4 className="text-sm font-semibold mb-2 text-gray-300">Search Results:</h4>
+                                            <div className="space-y-2">
+                                                {searchResults.map(player => (
+                                                    <div
+                                                        key={player.id}
+                                                        onClick={() => setSelectedPlayer(player.id)}
+                                                        className={`p-2 rounded cursor-pointer transition-colors ${
+                                                            selectedPlayer === player.id 
+                                                                ? 'bg-blue-600 text-white' 
+                                                                : 'bg-gray-600 hover:bg-gray-500 text-white'
+                                                        }`}
+                                                    >
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="font-medium">{player.name}</span>
+                                                            <span className="text-sm text-gray-300">
+                                                                {player.position} - {player.nflTeam}
+                                                            </span>
+                                                        </div>
+                                                        {player.jerseyNumber && (
+                                                            <div className="text-xs text-gray-400">
+                                                                #{player.jerseyNumber} • {player.age} years old
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Available Players Dropdown (Fallback) */}
+                                    {searchResults.length === 0 && (
+                                        <select
+                                            value={selectedPlayer}
+                                            onChange={(e) => setSelectedPlayer(e.target.value)}
+                                            className="w-full p-3 bg-gray-600 text-white rounded-md border border-gray-500"
+                                        >
+                                            <option value="">Choose from available players...</option>
+                                            {allPlayers.map(player => (
+                                                <option key={player.id} value={player.id}>
+                                                    {player.name} ({player.position} - {player.nflTeam})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
+
+                                    {/* Selected Player Info */}
+                                    {selectedPlayer && (
+                                        <div className="mt-3 p-3 bg-gray-600 rounded">
+                                            <div className="text-sm text-gray-300">Selected:</div>
+                                            <div className="font-semibold">
+                                                {getPlayerDetails(selectedPlayer, [...allPlayers, ...allNFLPlayers])?.name || 'Unknown Player'}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Action Buttons */}
+                                <div className="p-4 bg-gray-700 rounded-lg">
+                                    <h3 className="text-lg font-semibold mb-3">Actions</h3>
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={handleNominatePlayer}
+                                            disabled={!selectedPlayer}
+                                            className="w-full px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold rounded-md disabled:opacity-50"
+                                        >
+                                            Nominate Player
+                                        </button>
+                                        
+                                        {draftData.currentPlayer && (
+                                            <>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="number"
+                                                        value={currentBid}
+                                                        onChange={(e) => setCurrentBid(Number(e.target.value))}
+                                                        min={draftData.currentBid + 1}
+                                                        className="flex-1 p-2 bg-gray-600 text-white rounded-md border border-gray-500"
+                                                        placeholder="Bid amount"
+                                                    />
+                                                    <button
+                                                        onClick={handlePlaceBid}
+                                                        disabled={currentBid <= draftData.currentBid}
+                                                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md disabled:opacity-50"
+                                                    >
+                                                        Bid
+                                                    </button>
+                                                </div>
+                                                
+                                                {isCommissioner && (
+                                                    <button
+                                                        onClick={handleAwardPlayer}
+                                                        className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-md"
+                                                    >
+                                                        Award Player
+                                                    </button>
+                                                )}
+                                            </>
+                                        )}
+                                        
+                                        {isCommissioner && (
+                                            <button
+                                                onClick={handleEndAuction}
+                                                className="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-md"
+                                            >
+                                                End Auction
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Auction History */}
+                    {draftData?.draftedPlayers && draftData.draftedPlayers.length > 0 && (
+                        <div className="mt-8 p-4 bg-gray-700 rounded-lg">
+                            <h3 className="text-xl font-semibold mb-4">Auction History</h3>
+                            <div className="max-h-64 overflow-y-auto">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {draftData.draftedPlayers.map((pick, index) => {
+                                        const player = getPlayerDetails(pick.playerId, allPlayers);
+                                        const team = teamsData.find(t => t.id === pick.teamId);
+                                        return (
+                                            <div key={index} className="bg-gray-600 p-3 rounded">
+                                                <div className="font-semibold">{player?.name}</div>
+                                                <div className="text-sm text-gray-300">
+                                                    {team?.teamName || 'Unknown Team'} - ${pick.bid}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const WaiverWire = ({ currentLeague, userId, db, showMessage, teamsData, allPlayers }) => {
+            const [waiverClaims, setWaiverClaims] = useState([]);
+            const [selectedPlayer, setSelectedPlayer] = useState(null);
+            const [bidAmount, setBidAmount] = useState(1);
+            
+            useEffect(() => {
+                if (!db || !currentLeague.id) return;
+                const unsubscribe = db.collection(`leagues/${currentLeague.id}/waivers`)
+                    .onSnapshot(snapshot => {
+                        const claims = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setWaiverClaims(claims);
+                    });
+                return () => unsubscribe();
+            }, [db, currentLeague.id]);
+
+            const handlePlaceBid = async () => {
+                 if (bidAmount <= selectedPlayer.highestBid) {
+                    return showMessage(`Your bid must be higher than the current high bid of $${selectedPlayer.highestBid}.`, "error");
+                }
+                const waiverRef = db.doc(`leagues/${currentLeague.id}/waivers/${selectedPlayer.id}`);
+                try {
+                    await waiverRef.update({
+                        [`bids.${userId}`]: Number(bidAmount),
+                        highestBid: Number(bidAmount),
+                        highestBidder: userId
+                    });
+                    showMessage("Bid placed successfully!", "success");
+                    setSelectedPlayer(null);
+                } catch(error) {
+                    showMessage("Error placing bid.", "error");
+                    console.error("Bid error:", error);
+                }
+            };
+
+            const Countdown = ({ expiration }) => {
+                const [timeLeft, setTimeLeft] = useState('');
+                useEffect(() => {
+                    const interval = setInterval(() => {
+                        const now = new Date();
+                        const diff = expiration.toDate() - now;
+                        if (diff <= 0) {
+                            setTimeLeft("Expired");
+                            clearInterval(interval);
+                            return;
+                        }
+                        const hours = Math.floor(diff / (1000 * 60 * 60));
+                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                        setTimeLeft(`${hours}h ${minutes}m ${seconds}s`);
+                    }, 1000);
+                    return () => clearInterval(interval);
+                }, [expiration]);
+                return <span>{timeLeft}</span>;
+            };
+
+            return (
+                <div className="p-4 sm:p-6 bg-gray-800 rounded-lg shadow-xl max-w-4xl mx-auto my-8 text-white">
+                    <h2 className="text-3xl font-bold text-white mb-6 text-center">Waiver Wire</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {waiverClaims.map(claim => {
+                            const player = getPlayerDetails(claim.playerId, allPlayers);
+                            const highBidderTeam = teamsData.find(t => t.id === claim.highestBidder);
+                            return (
+                                <div key={claim.id} className="bg-gray-700 p-4 rounded-lg">
+                                    <h3 className="text-xl font-bold">{player.name}</h3>
+                                    <p className="text-gray-400">{player.position} - {player.nflTeam}</p>
+                                    <p className="mt-2">High Bid: <span className="font-bold text-green-400">${claim.highestBid}</span></p>
+                                    <p className="text-sm text-gray-300">By: {highBidderTeam?.teamName || 'Unknown'}</p>
+                                    <p className="mt-2">Time Left: <Countdown expiration={claim.expiration} /></p>
+                                    <button onClick={() => { setSelectedPlayer(claim); setBidAmount(claim.highestBid + 0.5); }} className="mt-4 w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 font-semibold rounded-md">Place Bid</button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {waiverClaims.length === 0 && <p className="text-center text-gray-400">No players currently on the waiver wire.</p>}
+
+                    {/* Bidding Modal */}
+                    {selectedPlayer && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                            <div className="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+                                <h3 className="text-2xl font-bold mb-4">Place Bid for {getPlayerDetails(selectedPlayer.id, allPlayers).name}</h3>
+                                <p className="mb-4">Current High Bid: ${selectedPlayer.highestBid}</p>
+                                <label className="block">
+                                    <span className="text-gray-300">Your Bid ($)</span>
+                                    <input type="number" step="0.5" value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-gray-700" />
+                                </label>
+                                <div className="flex justify-end gap-4 mt-6">
+                                    <button onClick={() => setSelectedPlayer(null)} className="px-6 py-2 bg-gray-600 hover:bg-gray-500 rounded-md">Cancel</button>
+                                    <button onClick={handlePlaceBid} className="px-6 py-2 bg-green-600 hover:bg-green-700 rounded-md">Submit Bid</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const { db, userId, isAuthReady, auth, userDisplayName, userAvatarUrl } = useFirebase();
+            const [activeTab, setActiveTab] = useState('leagues');
+            const [message, setMessage] = useState('');
+            const [messageType, setMessageType] = useState('');
+            const [currentLeagueId, setCurrentLeagueId] = useState(null);
+            const [currentTeamId, setCurrentTeamId] = useState(null);
+            const [currentLeague, setCurrentLeague] = useState(null);
+            const [currentTeam, setCurrentTeam] = useState(null);
+            const [teamsData, setTeamsData] = useState([]);
+
+            const isLoadingData = (currentLeagueId && !currentLeague) || (currentTeamId && !currentTeam);
+            const isCommissioner = currentLeague?.commissionerId === userId;
+
+            useEffect(() => {
+                if (!db || !currentLeague?.teams) {
+                    setTeamsData([]);
+                    return;
+                };
+                
+                const unsubscribes = currentLeague.teams.map(teamId => {
+                    return db.doc(`artifacts/${appId}/public/data/teams/${teamId}`).onSnapshot(doc => {
+                        if (doc.exists) {
+                            setTeamsData(prev => {
+                                const newTeams = prev.filter(t => t.id !== doc.id);
+                                return [...newTeams, { id: doc.id, ...doc.data() }];
+                            });
+                        }
+                    }, error => console.error("Team data listener error:", error));
+                });
+
+                return () => unsubscribes.forEach(unsub => unsub());
+
+            }, [db, currentLeague]);
+
+            const showMessage = (msg, type = 'success') => {
+                setMessage(msg);
+                setMessageType(type);
+                setTimeout(() => { setMessage(''); setMessageType(''); }, 4000);
+            };
+
+            const handleLeagueSelected = (leagueId, teamId) => {
+                setCurrentLeagueId(leagueId);
+                setCurrentTeamId(teamId);
+                setActiveTab('roster');
+            };
+            
+            const handleLeaveLeague = () => {
+                setCurrentLeagueId(null);
+                setCurrentTeamId(null);
+                setCurrentLeague(null);
+                setCurrentTeam(null);
+                setActiveTab('leagues');
+            };
+
+            useEffect(() => {
+                if (!db || !currentLeagueId) {
+                    setCurrentLeague(null);
+                    return;
+                }
+                const unsubscribe = db.doc(`leagues/${currentLeagueId}`).onSnapshot(doc => {
+                    if (doc.exists) {
+                        setCurrentLeague({ id: doc.id, ...doc.data() });
+                    } else {
+                        // This case is handled by onLeagueDeleted if the commish deletes it
+                        // but if it's deleted by other means, this will catch it.
+                         if (currentLeagueId) { // only show message if we thought we were in a league
+                            handleLeaveLeague();
+                            showMessage("The league you were in no longer exists.", "error");
+                        }
+                    }
+                }, (error) => {
+                    console.error("Error fetching current league:", error);
+                    showMessage("Error loading league data.", "error");
+                });
+                return () => unsubscribe();
+            }, [db, currentLeagueId]);
+
+            useEffect(() => {
+                if (!db || !currentTeamId) {
+                    setCurrentTeam(null);
+                    return;
+                }
+                const unsubscribe = db.doc(`artifacts/${appId}/public/data/teams/${currentTeamId}`).onSnapshot(doc => {
+                    if (doc.exists) {
+                        setCurrentTeam({ id: doc.id, ...doc.data() });
+                    } else {
+                        // Handled by commissioner deleting the team
+                        if (currentTeamId) {
+                            handleLeaveLeague();
+                            showMessage("Your team in this league was deleted.", "error");
+                        }
+                    }
+                }, (error) => {
+                    console.error("Error fetching current team:", error);
+                    showMessage("Error loading team data.", "error");
+                });
+                return () => unsubscribe();
+            }, [db, currentTeamId]);
+
+            const handlePlayerTransaction = () => {};
+
+            if (!isAuthReady) {
+                return <div className="flex items-center justify-center min-h-screen"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div></div>;
+            }
+
+            if (!userId) {
+                return <AuthScreen showMessage={showMessage} />;
+            }
+            
+            return (
+                <div className="min-h-screen text-gray-100 p-4 sm:p-6 lg:p-8">
+                    <header className="bg-gray-800 p-4 rounded-lg shadow-md mb-8 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left">
+                        <h1 className="text-3xl sm:text-4xl font-extrabold text-blue-400 mb-4 sm:mb-0">Fantasy Dynasty Central</h1>
+                        <div className="flex items-center gap-4">
+                            <div className="text-right">
+                                <span className="text-gray-400 text-sm">Welcome,</span>
+                                <p className="font-bold text-blue-300">{userDisplayName || 'User'}</p>
+                            </div>
+                            <Avatar
+                                docRefPath={`artifacts/${appId}/users/${userId}/userProfile/settings`}
+                                storagePath={`user-avatars/${userId}`}
+                                currentAvatarUrl={userAvatarUrl}
+                                showMessage={showMessage}
+                                size="h-12 w-12"
+                            />
+                            <button onClick={() => auth.signOut()} className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md transition duration-200 self-center">Logout</button>
+                        </div>
+                    </header>
+
+                    {message && <div className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-white z-50 ${messageType === 'success' ? 'bg-green-600' : 'bg-red-500'}`}>{message}</div>}
+
+                    <nav className="mb-8 bg-gray-800 p-2 rounded-lg shadow-md">
+                        <ul className="flex justify-center flex-wrap gap-2 sm:gap-x-4">
+                            {currentLeagueId && currentTeamId ? (
+                                <>
+                                    <li><button onClick={() => setActiveTab('leagues')} className={`px-3 py-2 text-sm sm:text-base rounded-md font-semibold transition-colors ${activeTab === 'leagues' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>My Leagues</button></li>
+                                    {['Roster', 'Waiver Wire', 'Auction', 'Trade', 'Standings'].map(tab => (
+                                        <li key={tab.toLowerCase().replace(' ', '-')}><button onClick={() => setActiveTab(tab.toLowerCase().replace(' ', '-'))} className={`px-3 py-2 text-sm sm:text-base rounded-md font-semibold transition-colors ${activeTab === tab.toLowerCase().replace(' ', '-') ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>{tab}</button></li>
+                                    ))}
+                                    {isCommissioner && <li><button onClick={() => setActiveTab('commissioner')} className={`px-3 py-2 text-sm sm:text-base rounded-md font-semibold transition-colors ${activeTab === 'commissioner' ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>Commissioner</button></li>}
+                                </>
+                            ) : (
+                                <li><button onClick={() => setActiveTab('leagues')} className={`px-4 py-2 rounded-md font-semibold transition-colors ${activeTab === 'leagues' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>Select League</button></li>
+                            )}
+                        </ul>
+                    </nav>
+
+                    <main>
+                        {isLoadingData ? (
+                            <div className="flex items-center justify-center pt-20"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div></div>
+                        ) : (
+                            <>
+                                {activeTab === 'leagues' && <LeagueSelector userId={userId} showMessage={showMessage} userDisplayName={userDisplayName} onLeagueSelected={handleLeagueSelected} />}
+                                {activeTab === 'roster' && currentTeam && currentLeague && <Roster teamData={currentTeam} allPlayers={mockPlayers} showMessage={showMessage} currentLeague={currentLeague} handleLeaveLeague={handleLeaveLeague} onPlayerTransaction={handlePlayerTransaction} currentTeamId={currentTeamId} />}
+                                {activeTab === 'standings' && currentLeague && <Standings currentLeague={currentLeague} showMessage={showMessage} db={db} userId={userId} teamsData={teamsData} />}
+                                {activeTab === 'auction' && currentLeague && <Auction currentLeague={currentLeague} userId={userId} db={db} showMessage={showMessage} teamsData={teamsData} />}
+                                {activeTab === 'waiver-wire' && currentLeague && <WaiverWire currentLeague={currentLeague} userId={userId} db={db} showMessage={showMessage} teamsData={teamsData} allPlayers={mockPlayers} />}
+                                {activeTab === 'trade' && currentLeague && currentTeamId && <TradeCenter db={db} userId={userId} showMessage={showMessage} currentLeague={currentLeague} currentTeamId={currentTeamId} teamsData={teamsData} allPlayers={mockPlayers} />}
+                                {activeTab === 'commissioner' && currentLeague && isCommissioner && <CommissionerTools currentLeague={currentLeague} db={db} showMessage={showMessage} teamsData={teamsData} onLeagueDeleted={handleLeaveLeague} />}
+                            </>
+                        )}
+                    </main>
+                </div>
+            );
+        };
+
+        const Root = () => (
+            <FirebaseProvider>
+                <App />
+            </FirebaseProvider>
+        );
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* Custom styles for the fantasy football app */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background-color: #111827; /* gray-900 - dark background */
+  color: white;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  background-color: #111827; /* gray-900 - dark background */
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* Minimum touch target size for mobile (44x44px) */
+.touch-target {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+}
+
+/* Safe area padding for notched phones */
+.mobile-safe-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.mobile-safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
+.mobile-page {
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .mobile-page {
+    padding-bottom: 0;
+  }
+}
+
+/* Hide horizontal scrollbars on mobile nav while keeping scroll */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Prevent iOS zoom on form focus */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+@media (min-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: inherit;
+  }
+}
+
+/* Global button styles */
+.btn-primary {
+  @apply px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md transition-colors;
+}
+
+.btn-secondary {
+  @apply px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-md transition-colors;
+}
+
+.btn-success {
+  @apply px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md transition-colors;
+}
+
+.btn-danger {
+  @apply px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-md transition-colors;
+}
+
+/* Global card styles */
+.card {
+  @apply bg-gray-800 rounded-lg shadow-xl p-6;
+}
+
+/* Global input styles */
+.input-field {
+  @apply w-full p-3 mt-1 rounded-md bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none;
+}
+
+/* Select dropdown styles */
+select {
+  background-color: #374151 !important; /* gray-700 */
+  color: white !important;
+}
+
+select option {
+  background-color: #374151 !important; /* gray-700 */
+  color: white !important;
+}
+
+select:focus {
+  background-color: #374151 !important; /* gray-700 */
+  color: white !important;
+}
+
+/* Modal animations */
+.modal-enter-active {
+  animation: modalEnter 0.3s ease-out;
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+} 

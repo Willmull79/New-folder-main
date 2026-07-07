@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Auth Test</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #111827;
+            color: white;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #1f2937;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background-color: #059669; }
+        .error { background-color: #dc2626; }
+        .info { background-color: #2563eb; }
+        button {
+            background-color: #059669;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #047857;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #374151;
+            border-radius: 4px;
+            background-color: #374151;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Firebase Authentication Test</h1>
+        <div id="status"></div>
+        
+        <div id="auth-form" style="display: none;">
+            <h2>Authentication</h2>
+            <input type="email" id="email" placeholder="Email" />
+            <input type="password" id="password" placeholder="Password" />
+            <button onclick="register()">Register</button>
+            <button onclick="login()">Login</button>
+            <button onclick="logout()">Logout</button>
+        </div>
+        
+        <div id="user-info" style="display: none;">
+            <h2>User Information</h2>
+            <p id="user-details"></p>
+        </div>
+    </div>
+
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyATjCS24dzLOgWXTeKHzZhOt4D0jHB2pSE",
+            authDomain: "dynasty-420.firebaseapp.com",
+            projectId: "dynasty-420",
+            storageBucket: "dynasty-420.appspot.com",
+            messagingSenderId: "479339876160",
+            appId: "1:479339876160:web:bad67f99b552c76eedb4a5",
+            measurementId: "G-6PN842Q42W"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function showUserInfo(user) {
+            const userInfoDiv = document.getElementById('user-info');
+            const userDetailsP = document.getElementById('user-details');
+            const authFormDiv = document.getElementById('auth-form');
+            
+            userDetailsP.innerHTML = `
+                <strong>Email:</strong> ${user.email}<br>
+                <strong>UID:</strong> ${user.uid}<br>
+                <strong>Email Verified:</strong> ${user.emailVerified}<br>
+                <strong>Provider:</strong> ${user.providerData[0]?.providerId || 'N/A'}
+            `;
+            
+            userInfoDiv.style.display = 'block';
+            authFormDiv.style.display = 'none';
+        }
+
+        function hideUserInfo() {
+            const userInfoDiv = document.getElementById('user-info');
+            const authFormDiv = document.getElementById('auth-form');
+            
+            userInfoDiv.style.display = 'none';
+            authFormDiv.style.display = 'block';
+        }
+
+        // Auth state listener
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                updateStatus(`User logged in: ${user.email}`, 'success');
+                showUserInfo(user);
+            } else {
+                updateStatus('No user logged in', 'info');
+                hideUserInfo();
+            }
+        });
+
+        // Test functions
+        async function register() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            if (!email || !password) {
+                updateStatus('Please enter email and password', 'error');
+                return;
+            }
+            
+            try {
+                updateStatus('Registering...', 'info');
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                updateStatus('Registration successful!', 'success');
+            } catch (error) {
+                updateStatus(`Registration error: ${error.message}`, 'error');
+            }
+        }
+
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            if (!email || !password) {
+                updateStatus('Please enter email and password', 'error');
+                return;
+            }
+            
+            try {
+                updateStatus('Logging in...', 'info');
+                const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                updateStatus('Login successful!', 'success');
+            } catch (error) {
+                updateStatus(`Login error: ${error.message}`, 'error');
+            }
+        }
+
+        async function logout() {
+            try {
+                await auth.signOut();
+                updateStatus('Logged out successfully', 'info');
+            } catch (error) {
+                updateStatus(`Logout error: ${error.message}`, 'error');
+            }
+        }
+
+        // Initialize
+        updateStatus('Firebase initialized. Testing authentication...', 'info');
+    </script>
+</body>
+</html> 
