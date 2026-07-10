@@ -2,11 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails } from '../utils/helpers.js';
 import { isTeamSalaryCapEnabled, isPlayerSalaryEnabled } from '../constants/leagueDefaults.js';
-import { appId } from '../config/firebase.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
 
 // Import firebase globally (it's loaded in the HTML)
 const firebase = window.firebase;
+
+const getLineupPlayerIds = (lineup) => {
+    if (Array.isArray(lineup)) {
+        return lineup.filter(Boolean);
+    }
+    if (lineup && typeof lineup === 'object') {
+        return Object.values(lineup).filter(Boolean);
+    }
+    return [];
+};
 
 export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, currentTeamId }) => {
     const { db } = useFirebase();
@@ -33,9 +42,8 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
     useEffect(() => {
         if (!db || !currentLeague?.id) return;
 
-        // Listen to teams data
-        const teamsUnsubscribe = db.collection(`artifacts/${appId}/public/data/teams`)
-            .where('leagueId', '==', currentLeague.id)
+        // Listen to teams in the league subcollection
+        const teamsUnsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
             .onSnapshot(snapshot => {
                 const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setTeamsData(teams);
@@ -60,7 +68,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             teamsUnsubscribe();
             tradesUnsubscribe();
         };
-    }, [db, currentLeague?.id, currentTeam?.ownerId]);
+    }, [db, currentLeague?.id, currentLeague?.commissionerId, currentTeam?.ownerId]);
 
     const initializeTradeOffer = (teamId) => {
         return {
@@ -109,7 +117,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                     salary: player.salary,
                     rosterType: rosterType
                 }],
-                salaryCap: (prev[teamId]?.salaryCap || 0) + player.salary
+                salaryCap: (prev[teamId]?.salaryCap || 0) + (player.salary || 0)
             }
         }));
     };
@@ -152,9 +160,9 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         const team = teamsData.find(t => t.id === teamId);
         const roster = team?.roster || {};
         return {
-            lineup: Array.isArray(roster.lineup) ? roster.lineup : [],
-            bench: Array.isArray(roster.bench) ? roster.bench : [],
-            ir: Array.isArray(roster.ir) ? roster.ir : []
+            lineup: getLineupPlayerIds(roster.lineup),
+            bench: Array.isArray(roster.bench) ? roster.bench.filter(Boolean) : [],
+            ir: Array.isArray(roster.ir) ? roster.ir.filter(Boolean) : []
         };
     };
 
@@ -175,37 +183,37 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
         // Check salary cap compliance for each team
         if (salaryRulesEnabled) {
-        for (const teamId of selectedTeams) {
-            const team = teamsData.find(t => t.id === teamId);
-            const offer = tradeOffers[teamId];
-            
-            if (!team || !offer) continue;
+            for (const teamId of selectedTeams) {
+                const team = teamsData.find(t => t.id === teamId);
+                const offer = tradeOffers[teamId];
 
-            const currentSalary = (team.roster?.lineup || []).reduce((sum, playerId) => {
-                const player = getPlayerDetails(playerId, allPlayers);
-                return sum + (player?.salary || 0);
-            }, 0);
+                if (!team || !offer) continue;
 
-            const outgoingSalary = offer.players
-                .filter(p => p.rosterType === 'lineup')
-                .reduce((sum, p) => sum + p.salary, 0);
-
-            const incomingSalary = selectedTeams
-                .filter(otherTeamId => otherTeamId !== teamId)
-                .reduce((sum, otherTeamId) => {
-                    const otherOffer = tradeOffers[otherTeamId];
-                    return sum + (otherOffer?.players
-                        .filter(p => p.rosterType === 'lineup')
-                        .reduce((s, p) => s + p.salary, 0) || 0);
+                const currentSalary = getLineupPlayerIds(team.roster?.lineup).reduce((sum, playerId) => {
+                    const player = getPlayerDetails(playerId, allPlayers);
+                    return sum + (player?.salary || 0);
                 }, 0);
 
-            const newSalary = currentSalary - outgoingSalary + incomingSalary;
-            const salaryCap = currentLeague?.settings?.teamSalary || 200;
+                const outgoingSalary = offer.players
+                    .filter(p => p.rosterType === 'lineup')
+                    .reduce((sum, p) => sum + (p.salary || 0), 0);
 
-            if (newSalary > salaryCap) {
-                return { valid: false, message: `${team.teamName} would exceed salary cap after trade.` };
+                const incomingSalary = selectedTeams
+                    .filter(otherTeamId => otherTeamId !== teamId)
+                    .reduce((sum, otherTeamId) => {
+                        const otherOffer = tradeOffers[otherTeamId];
+                        return sum + (otherOffer?.players
+                            .filter(p => p.rosterType === 'lineup')
+                            .reduce((s, p) => s + (p.salary || 0), 0) || 0);
+                    }, 0);
+
+                const newSalary = currentSalary - outgoingSalary + incomingSalary;
+                const salaryCap = currentLeague?.settings?.teamSalary || 200;
+
+                if (newSalary > salaryCap) {
+                    return { valid: false, message: `${team.teamName} would exceed salary cap after trade.` };
+                }
             }
-        }
         }
 
         return { valid: true, message: "Trade is valid!" };
@@ -232,7 +240,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             };
 
             await db.collection(`leagues/${currentLeague.id}/trades`).add(tradeData);
-            
+
             showMessage("Trade proposal sent successfully!", "success");
             setActiveTrade(null);
             setSelectedTeams([currentTeamId]);
@@ -287,24 +295,38 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
             // Execute the trade for each team
             for (const teamId of trade.teams) {
-                const teamRef = db.doc(`artifacts/${appId}/public/data/teams/${teamId}`);
+                const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${teamId}`);
                 const team = teamsData.find(t => t.id === teamId);
-                
+
                 if (!team) continue;
 
-                const newRoster = { ...team.roster };
+                const newRoster = {
+                    lineup: team.roster?.lineup && typeof team.roster.lineup === 'object' && !Array.isArray(team.roster.lineup)
+                        ? { ...team.roster.lineup }
+                        : (Array.isArray(team.roster?.lineup) ? [...team.roster.lineup] : {}),
+                    bench: Array.isArray(team.roster?.bench) ? [...team.roster.bench] : [],
+                    ir: Array.isArray(team.roster?.ir) ? [...team.roster.ir] : [],
+                };
                 const offer = trade.offers[teamId];
 
                 // Remove outgoing players
                 for (const player of offer.players) {
                     const rosterType = player.rosterType;
-                    newRoster[rosterType] = newRoster[rosterType].filter(id => id !== player.id);
+                    if (rosterType === 'lineup' && newRoster.lineup && typeof newRoster.lineup === 'object' && !Array.isArray(newRoster.lineup)) {
+                        Object.keys(newRoster.lineup).forEach((slot) => {
+                            if (newRoster.lineup[slot] === player.id) {
+                                newRoster.lineup[slot] = null;
+                            }
+                        });
+                    } else if (Array.isArray(newRoster[rosterType])) {
+                        newRoster[rosterType] = newRoster[rosterType].filter(id => id !== player.id);
+                    }
                 }
 
                 // Add incoming players from other teams
                 for (const otherTeamId of trade.teams) {
                     if (otherTeamId === teamId) continue;
-                    
+
                     const otherOffer = trade.offers[otherTeamId];
                     for (const player of otherOffer.players) {
                         newRoster.bench.push(player.id);
@@ -315,7 +337,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             }
 
             // Mark trade as executed
-            batch.update(tradeRef, { 
+            batch.update(tradeRef, {
                 status: 'executed',
                 executedAt: firebase.firestore.FieldValue.serverTimestamp()
             });

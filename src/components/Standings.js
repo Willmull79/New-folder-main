@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext';
-import { appId } from '../config/firebase.js';
 
 const Standings = ({ currentLeague, showMessage }) => {
     const { db } = useFirebase();
@@ -8,29 +7,46 @@ const Standings = ({ currentLeague, showMessage }) => {
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        if (!db || !currentLeague?.teams) {
+        if (!db || !currentLeague?.id) {
+            setTeamsData([]);
+            setIsLoading(false);
+            return;
+        }
+
+        const teamIds = Array.isArray(currentLeague.teams) ? currentLeague.teams : [];
+        if (teamIds.length === 0) {
             setTeamsData([]);
             setIsLoading(false);
             return;
         }
 
         setIsLoading(true);
-        const unsubscribes = currentLeague.teams.map(teamId => {
-            return db.doc(`artifacts/${appId}/public/data/teams/${teamId}`).onSnapshot(doc => {
+        setTeamsData([]);
+
+        let pending = teamIds.length;
+        const unsubscribes = teamIds.map(teamId => {
+            return db.doc(`leagues/${currentLeague.id}/teams/${teamId}`).onSnapshot(doc => {
                 if (doc.exists) {
                     setTeamsData(prev => {
                         const newTeams = prev.filter(t => t.id !== doc.id);
                         return [...newTeams, { id: doc.id, ...doc.data() }];
                     });
                 }
+                pending = Math.max(0, pending - 1);
+                if (pending === 0) {
+                    setIsLoading(false);
+                }
             }, error => {
                 console.error("Team data listener error:", error);
                 showMessage("Error loading team data.", "error");
+                pending = Math.max(0, pending - 1);
+                if (pending === 0) {
+                    setIsLoading(false);
+                }
             });
         });
 
-        // Set loading to false after a short delay to ensure data is loaded
-        const timer = setTimeout(() => setIsLoading(false), 1000);
+        const timer = setTimeout(() => setIsLoading(false), 3000);
 
         return () => {
             unsubscribes.forEach(unsub => unsub());

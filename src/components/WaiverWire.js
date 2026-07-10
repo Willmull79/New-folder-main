@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
-import { appId } from '../config/firebase.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
 
 // Import firebase globally (it's loaded in the HTML)
@@ -32,9 +31,8 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                 console.error("Error listening to waiver claims:", error);
             });
 
-        // Listen to teams data
-        const teamsUnsubscribe = db.collection(`artifacts/${appId}/public/data/teams`)
-            .where('leagueId', '==', currentLeague.id)
+        // Listen to teams in the league subcollection
+        const teamsUnsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
             .onSnapshot(snapshot => {
                 const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setTeamsData(teams);
@@ -135,8 +133,12 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
             const batch = db.batch();
             
             // Add player to winning team's bench
-            const teamRef = db.doc(`artifacts/${appId}/public/data/teams/${winningTeam.id}`);
-            const updatedRoster = { ...winningTeam.roster };
+            const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${winningTeam.id}`);
+            const updatedRoster = {
+                lineup: winningTeam.roster?.lineup || {},
+                bench: Array.isArray(winningTeam.roster?.bench) ? [...winningTeam.roster.bench] : [],
+                ir: Array.isArray(winningTeam.roster?.ir) ? [...winningTeam.roster.ir] : [],
+            };
             updatedRoster.bench.push(waiver.playerId);
             
             batch.update(teamRef, { roster: updatedRoster });
@@ -192,8 +194,12 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
             const batch = db.batch();
             
             // Add player to current team's bench
-            const teamRef = db.doc(`artifacts/${appId}/public/data/teams/${currentTeamId}`);
-            const updatedRoster = { ...currentTeam.roster };
+            const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${currentTeamId}`);
+            const updatedRoster = {
+                lineup: currentTeam.roster?.lineup || {},
+                bench: Array.isArray(currentTeam.roster?.bench) ? [...currentTeam.roster.bench] : [],
+                ir: Array.isArray(currentTeam.roster?.ir) ? [...currentTeam.roster.ir] : [],
+            };
             updatedRoster.bench.push(playerId);
             
             batch.update(teamRef, { roster: updatedRoster });
