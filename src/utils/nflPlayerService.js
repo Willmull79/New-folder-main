@@ -1,5 +1,6 @@
 // NFL Player Service - Primary source: Sleeper API (QB/RB/WR/TE only)
 import { FALLBACK_NFL_PLAYERS } from '../data/fallbackPlayers.js';
+import { isOnActiveNflRoster } from './helpers.js';
 import {
     getSleeperNflPlayers,
     loadSleeperPlayersFromCache,
@@ -34,13 +35,19 @@ class NFLPlayerService {
         return hoursSinceUpdate >= 24;
     }
 
-    // Get all NFL players (Sleeper API, filtered to QB/RB/WR/TE)
+    // Drop FA / unrostered players (also cleans older caches)
+    keepRosteredPlayersOnly() {
+        this.players = (this.players || []).filter(isOnActiveNflRoster);
+    }
+
+    // Get all NFL players (Sleeper API, filtered to QB/RB/WR/TE on NFL rosters)
     async getAllPlayers({ forceRefresh = false } = {}) {
         if (forceRefresh || this.shouldUpdate()) {
             await this.updatePlayerData(forceRefresh);
         } else {
             await this.loadFromCache();
         }
+        this.keepRosteredPlayersOnly();
         return this.players;
     }
 

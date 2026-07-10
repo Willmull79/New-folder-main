@@ -8,6 +8,7 @@ import {
     stopDraftLocal,
 } from './localDraftEngine.js';
 import { generatePickOrder, shuffleArray } from './draftOrderUtils.js';
+import { isOnActiveNflRoster } from './helpers.js';
 
 class DraftService {
     constructor() {
@@ -21,7 +22,7 @@ class DraftService {
     }
 
     setPlayerPool(players) {
-        this.playerPool = players || [];
+        this.playerPool = (players || []).filter(isOnActiveNflRoster);
     }
 
     async getDraftStatus(leagueId, draftDoc, leagueTeams = []) {

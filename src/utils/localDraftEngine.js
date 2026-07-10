@@ -93,7 +93,11 @@ export async function startDraftLocal(db, leagueId, playerPool = []) {
         : generatePickOrder(roundOneOrder, draftFormat, rounds);
 
     const normalizedPool = (playerPool.length ? playerPool : draft.availablePlayers || [])
-        .map(normalizePlayer);
+        .map(normalizePlayer)
+        .filter((player) => {
+            const team = String(player.nflTeam ?? player.team ?? '').trim().toUpperCase();
+            return Boolean(team) && team !== 'FA' && team !== 'FREE AGENT';
+        });
 
     if (!normalizedPool.length) {
         throw new Error('No players available for the draft. Reload the page and try again.');
@@ -326,7 +330,12 @@ export async function resetDraftLocal(db, leagueId, playerPool = []) {
     });
 
     const roundOneOrder = draft.roundOneOrder || league.teams || [];
-    const normalizedPool = (playerPool.length ? playerPool : draft.availablePlayers || []).map(normalizePlayer);
+    const normalizedPool = (playerPool.length ? playerPool : draft.availablePlayers || [])
+        .map(normalizePlayer)
+        .filter((player) => {
+            const team = String(player.nflTeam ?? player.team ?? '').trim().toUpperCase();
+            return Boolean(team) && team !== 'FA' && team !== 'FREE AGENT';
+        });
     const leagueUpdate = {
         draft: {
             ...draft,

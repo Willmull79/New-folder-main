@@ -27,9 +27,13 @@ const parseSleeperPlayer = (player) => ({
 });
 
 const filterActiveEligiblePlayers = (playersById) => {
-    return Object.entries(playersById).filter(([, player]) => (
-        player.active === true && ELIGIBLE_POSITIONS.has(player.position)
-    ));
+    return Object.entries(playersById).filter(([, player]) => {
+        if (player.active !== true || !ELIGIBLE_POSITIONS.has(player.position)) {
+            return false;
+        }
+        const team = String(player.team || '').trim().toUpperCase();
+        return Boolean(team) && team !== 'FA' && team !== 'FREE AGENT';
+    });
 };
 
 async function fetchSleeperNflPlayers() {

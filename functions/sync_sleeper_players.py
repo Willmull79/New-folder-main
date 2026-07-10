@@ -187,6 +187,10 @@ def filter_players(players_by_id: dict) -> list[tuple[str, dict]]:
         if player.get("status") != "Active":
             continue
 
+        team = (player.get("team") or "").strip().upper()
+        if not team or team in {"FA", "FREE AGENT"}:
+            continue
+
         filtered.append((str(player_id), player))
 
     return filtered

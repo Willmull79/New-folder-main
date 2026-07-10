@@ -14,6 +14,7 @@ import {
     generatePickOrder,
     formatPickTimeLabel
 } from '../utils/draftOrderUtils.js';
+import { isOnActiveNflRoster } from '../utils/helpers.js';
 
 const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, currentTeamId, userId }) => {
     const { db } = useFirebase();
@@ -90,17 +91,19 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
     );
 
     const draftablePlayers = useMemo(() => {
-        if (draftStatus === 'live' && draftData?.availablePlayers?.length) {
-            return draftData.availablePlayers;
-        }
-
         const draftedIds = new Set([
             ...(draftData?.draftedPlayers || []).map((player) => player.id || player.playerId),
             ...(draftData?.picks || []).map((pick) => pick.playerId),
             ...(currentLeague?.allRosteredPlayerIds || []),
         ]);
 
-        return playerSource.filter((player) => !draftedIds.has(player.id));
+        const source = (draftStatus === 'live' && draftData?.availablePlayers?.length)
+            ? draftData.availablePlayers
+            : playerSource;
+
+        return source.filter((player) => (
+            isOnActiveNflRoster(player) && !draftedIds.has(player.id)
+        ));
     }, [draftStatus, draftData, currentLeague, playerSource]);
 
     const visibleDraftPlayers = useMemo(() => {
@@ -121,7 +124,9 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             if (doc.exists) {
                 const data = doc.data();
                 setDraftData(data.draft || {});
-                setAvailablePlayers(data.draft?.availablePlayers || []);
+                setAvailablePlayers(
+                    (data.draft?.availablePlayers || []).filter(isOnActiveNflRoster)
+                );
                 setDraftOrder(data.draft?.draftOrder || []);
                 setCurrentPick(data.draft?.currentPick || null);
                 setIsAuctionActive(data.draft?.status === 'active');
@@ -250,7 +255,9 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         const fetchPlayers = async () => {
             try {
                 if (allPlayers?.length) {
-                    const sortedPlayers = [...allPlayers].sort((a, b) => {
+                    const sortedPlayers = [...allPlayers]
+                        .filter(isOnActiveNflRoster)
+                        .sort((a, b) => {
                         if (a.rank && b.rank) return a.rank - b.rank;
                         return a.name.localeCompare(b.name);
                     });
@@ -261,7 +268,9 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
 
                 const players = await nflPlayerService.getAllPlayers();
                 if (players && players.length > 0) {
-                    const sortedPlayers = players.sort((a, b) => {
+                    const sortedPlayers = players
+                        .filter(isOnActiveNflRoster)
+                        .sort((a, b) => {
                         if (a.rank && b.rank) {
                             return a.rank - b.rank;
                         }

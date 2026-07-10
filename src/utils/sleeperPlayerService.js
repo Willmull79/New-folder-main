@@ -40,6 +40,11 @@ export const filterSleeperPlayersToArray = (playersById) => {
             if (!isOnTeamDepthChart(player)) {
                 return false;
             }
+            // Drop free agents / players not attached to an NFL roster
+            const team = String(player.team ?? '').trim().toUpperCase();
+            if (!team || team === 'FA' || team === 'FREE AGENT') {
+                return false;
+            }
             return true;
         })
         .map(transformSleeperPlayer)
