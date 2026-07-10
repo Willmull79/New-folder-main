@@ -1,65 +1,70 @@
 const express = require('express');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { validateRequest, schemas } = require('../middleware/validation');
-const { authenticateToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
-const League = require('../models/League');
-const User = require('../models/User');
+const leagueService = require('../services/leagueService');
 
 const router = express.Router();
 
-// GET /api/draft/:leagueId - Get draft status and data
-router.get('/:leagueId', asyncHandler(async (req, res) => {
-    const { leagueId } = req.params;
-    const userId = req.user.id;
+const getUserId = (req) => req.user._id || req.user.id;
 
-    const league = await League.findById(leagueId)
-        .populate('teams')
-        .populate('draft.draftOrder', 'teamName ownerId')
-        .populate('draft.draftedPlayers.playerId', 'name position nflTeam rank')
-        .populate('draft.draftedPlayers.teamId', 'teamName');
-
+const getLeagueOrThrow = async (leagueId) => {
+    const league = await leagueService.findById(leagueId);
     if (!league) {
         throw new AppError('League not found', 404);
     }
+    return league;
+};
 
-    // Check if user is part of this league
-    const userTeam = league.teams.find(team => team.ownerId.toString() === userId);
+const requireCommissioner = (league, userId) => {
+    if (!leagueService.isCommissioner(league, userId)) {
+        throw new AppError('Only commissioner can perform this action', 403);
+    }
+};
+
+router.get('/:leagueId', asyncHandler(async (req, res) => {
+    const { leagueId } = req.params;
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
+
+    const userTeam = leagueService.findUserTeam(league.teams, userId);
     if (!userTeam) {
         throw new AppError('Not authorized to access this league', 403);
     }
 
+    const draft = league.draft || {};
+    const draftOrder = draft.draftOrder || [];
+    const currentPick = draft.currentPick || 0;
+
     const draftData = {
-        status: league.draft?.status || 'pending',
-        currentPick: league.draft?.currentPick || 0,
-        currentRound: league.draft?.currentRound || 1,
-        draftOrder: league.draft?.draftOrder || [],
-        draftedPlayers: league.draft?.draftedPlayers || [],
-        availablePlayers: league.draft?.availablePlayers || [],
-        scheduledDateTime: league.draft?.scheduledDateTime,
-        startTime: league.draft?.startTime,
-        endTime: league.draft?.endTime,
-        settings: league.draft?.settings || {},
+        status: draft.status || 'pending',
+        currentPick,
+        currentRound: draft.currentRound || 1,
+        draftOrder,
+        draftedPlayers: draft.draftedPlayers || [],
+        availablePlayers: draft.availablePlayers || [],
+        scheduledDateTime: draft.scheduledDateTime,
+        startTime: draft.startTime || draft.startedAt,
+        endTime: draft.endTime,
+        settings: draft.settings || {},
         isMyTurn: false,
-        picksUntilMyTurn: 0
+        picksUntilMyTurn: 0,
     };
 
-    // Calculate turn information
-    if (draftData.status === 'live' && draftData.draftOrder.length > 0) {
-        const myPosition = draftData.draftOrder.findIndex(team => team._id.toString() === userTeam._id.toString());
+    if (draftData.status === 'live' && draftOrder.length > 0) {
+        const myPosition = draftOrder.findIndex(
+            (teamId) => teamId === userTeam.id || teamId === userTeam._id
+                || teamId?.toString?.() === userTeam.id,
+        );
         if (myPosition !== -1) {
-            draftData.isMyTurn = myPosition === draftData.currentPick;
-            draftData.picksUntilMyTurn = Math.max(0, myPosition - draftData.currentPick);
+            draftData.isMyTurn = myPosition === currentPick;
+            draftData.picksUntilMyTurn = Math.max(0, myPosition - currentPick);
         }
     }
 
-    res.json({
-        success: true,
-        data: draftData
-    });
+    res.json({ success: true, data: draftData });
 }));
 
-// POST /api/draft/:leagueId/configure - Configure draft settings (Commissioner only)
 router.post('/:leagueId/configure', validateRequest(schemas.draft.settings), asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
     const {
@@ -71,19 +76,12 @@ router.post('/:leagueId/configure', validateRequest(schemas.draft.settings), asy
         pickTimeLimit,
         timeLimit,
         orderType,
-        autoPick
+        autoPick,
     } = req.body;
-    const userId = req.user.id;
+    const userId = getUserId(req);
 
-    const league = await League.findById(leagueId);
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is commissioner
-    if (league.commissionerId.toString() !== userId) {
-        throw new AppError('Only commissioner can configure draft', 403);
-    }
+    const league = await getLeagueOrThrow(leagueId);
+    requireCommissioner(league, userId);
 
     const firstRoundOrder = roundOneOrder || draftOrder;
     if (firstRoundOrder && firstRoundOrder.length !== league.teams.length) {
@@ -96,18 +94,6 @@ router.post('/:leagueId/configure', validateRequest(schemas.draft.settings), asy
         ? (pickTimeLimit === 0 ? null : pickTimeLimit)
         : (timeLimit || 60);
 
-    const buildPickOrder = (order) => {
-        const pickOrder = [];
-        for (let round = 1; round <= totalRounds; round++) {
-            if (format === 'snake' && round % 2 === 0) {
-                pickOrder.push(...[...order].reverse());
-            } else {
-                pickOrder.push(...order);
-            }
-        }
-        return pickOrder;
-    };
-
     const updateData = {
         'draft.settings': {
             draftFormat: format,
@@ -116,44 +102,36 @@ router.post('/:leagueId/configure', validateRequest(schemas.draft.settings), asy
             pickTimeLimit: resolvedPickTime,
             timeLimit: resolvedPickTime,
             orderType: orderType || 'random',
-            autoPick: autoPick || false
+            autoPick: autoPick || false,
         },
-        'draft.status': firstRoundOrder ? 'order_set' : 'configured'
+        'draft.status': firstRoundOrder ? 'order_set' : 'configured',
     };
 
     if (firstRoundOrder) {
         updateData['draft.roundOneOrder'] = firstRoundOrder;
-        updateData['draft.draftOrder'] = buildPickOrder(firstRoundOrder);
+        updateData['draft.draftOrder'] = leagueService.buildPickOrder(
+            firstRoundOrder,
+            format,
+            totalRounds,
+            league.teams.length,
+        );
     }
 
-    await League.findByIdAndUpdate(leagueId, updateData);
+    await leagueService.updateLeague(leagueId, updateData);
 
     res.json({
         success: true,
         message: 'Draft configured successfully',
-        data: updateData
+        data: updateData,
     });
 }));
 
-// POST /api/draft/:leagueId/start - Start the draft (Commissioner only)
 router.post('/:leagueId/start', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const userId = req.user.id;
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
+    requireCommissioner(league, userId);
 
-    const league = await League.findById(leagueId)
-        .populate('teams')
-        .populate('draft.draftOrder');
-
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is commissioner
-    if (league.commissionerId.toString() !== userId) {
-        throw new AppError('Only commissioner can start draft', 403);
-    }
-
-    // Validate draft is ready to start
     if (league.draft?.status === 'live') {
         throw new AppError('Draft is already live', 400);
     }
@@ -162,97 +140,87 @@ router.post('/:leagueId/start', asyncHandler(async (req, res) => {
         throw new AppError('Draft order must be set before starting', 400);
     }
 
-    // Initialize draft state
     const draftState = {
         status: 'live',
         currentPick: 0,
         currentRound: 1,
         startTime: new Date(),
-        availablePlayers: [], // Will be populated with player data
+        availablePlayers: league.draft.availablePlayers || [],
         draftedPlayers: [],
-        picks: []
+        picks: [],
     };
 
-    await League.findByIdAndUpdate(leagueId, {
-        'draft': { ...league.draft, ...draftState }
-    });
+    await leagueService.updateLeague(leagueId, { draft: { ...league.draft, ...draftState } });
 
     res.json({
         success: true,
         message: 'Draft started successfully',
-        data: draftState
+        data: draftState,
     });
 }));
 
-// POST /api/draft/:leagueId/pick - Make a draft pick
 router.post('/:leagueId/pick', validateRequest(schemas.draft.pick), asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const { playerId, round, pick } = req.body;
-    const userId = req.user.id;
+    const { playerId } = req.body;
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
 
-    const league = await League.findById(leagueId)
-        .populate('teams')
-        .populate('draft.draftOrder');
-
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is part of this league
-    const userTeam = league.teams.find(team => team.ownerId.toString() === userId);
+    const userTeam = leagueService.findUserTeam(league.teams, userId);
     if (!userTeam) {
         throw new AppError('Not authorized to access this league', 403);
     }
 
-    // Validate draft is live
     if (league.draft?.status !== 'live') {
         throw new AppError('Draft is not currently live', 400);
     }
 
-    // Validate it's the user's turn
-    const currentPickIndex = league.draft.currentPick;
-    const currentTeamId = league.draft.draftOrder[currentPickIndex]?._id.toString();
-    
-    if (currentTeamId !== userTeam._id.toString()) {
+    const currentPickIndex = league.draft.currentPick || 0;
+    const draftOrder = league.draft.draftOrder || [];
+    const currentTeamId = draftOrder[currentPickIndex];
+
+    if (currentTeamId !== userTeam.id && currentTeamId !== userTeam._id
+        && currentTeamId?.toString?.() !== userTeam.id) {
         throw new AppError('It is not your turn to pick', 400);
     }
 
-    // Validate player is available
-    if (!league.draft.availablePlayers.includes(playerId)) {
+    const availablePlayers = league.draft.availablePlayers || [];
+    const playerAvailable = availablePlayers.some(
+        (id) => id === playerId || id?.toString?.() === playerId,
+    );
+    if (!playerAvailable) {
         throw new AppError('Player is not available for drafting', 400);
     }
 
-    // Create pick record
     const pickRecord = {
-        playerId: playerId,
-        teamId: userTeam._id,
-        round: league.draft.currentRound,
+        playerId,
+        teamId: userTeam.id || userTeam._id,
+        round: league.draft.currentRound || 1,
         pick: currentPickIndex + 1,
-        timestamp: new Date()
+        timestamp: new Date(),
     };
 
-    // Update league draft state
+    const nextPick = currentPickIndex + 1;
+    const teamCount = league.teams.length;
+    const draftRounds = league.draft?.settings?.rounds || 20;
+    const totalPicks = teamCount * draftRounds;
+
     const updatedDraft = {
         ...league.draft,
-        currentPick: currentPickIndex + 1,
-        currentRound: Math.floor((currentPickIndex + 1) / league.teams.length) + 1,
+        currentPick: nextPick,
+        currentRound: Math.floor(nextPick / teamCount) + 1,
         draftedPlayers: [...(league.draft.draftedPlayers || []), pickRecord],
-        availablePlayers: league.draft.availablePlayers.filter(id => id !== playerId),
-        picks: [...(league.draft.picks || []), pickRecord]
+        availablePlayers: availablePlayers.filter(
+            (id) => id !== playerId && id?.toString?.() !== playerId,
+        ),
+        picks: [...(league.draft.picks || []), pickRecord],
     };
 
-    const draftRounds = league.draft?.settings?.rounds || 20;
-    const totalPicks = league.teams.length * draftRounds;
-
-    // Check if draft is complete
-    if (updatedDraft.currentPick >= totalPicks) {
+    if (nextPick >= totalPicks) {
         updatedDraft.status = 'completed';
         updatedDraft.endTime = new Date();
     }
 
-    await League.findByIdAndUpdate(leagueId, {
-        'draft': updatedDraft
-    });
+    await leagueService.updateLeague(leagueId, { draft: updatedDraft });
 
     res.json({
         success: true,
@@ -261,114 +229,64 @@ router.post('/:leagueId/pick', validateRequest(schemas.draft.pick), asyncHandler
             pick: pickRecord,
             nextPick: updatedDraft.currentPick,
             nextRound: updatedDraft.currentRound,
-            isComplete: updatedDraft.status === 'completed'
-        }
+            isComplete: updatedDraft.status === 'completed',
+        },
     });
 }));
 
-// POST /api/draft/:leagueId/pause - Pause the draft (Commissioner only)
 router.post('/:leagueId/pause', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const userId = req.user.id;
-
-    const league = await League.findById(leagueId);
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is commissioner
-    if (league.commissionerId.toString() !== userId) {
-        throw new AppError('Only commissioner can pause draft', 403);
-    }
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
+    requireCommissioner(league, userId);
 
     if (league.draft?.status !== 'live') {
         throw new AppError('Draft is not currently live', 400);
     }
 
-    await League.findByIdAndUpdate(leagueId, {
-        'draft.status': 'paused'
-    });
-
-    res.json({
-        success: true,
-        message: 'Draft paused successfully'
-    });
+    await leagueService.updateLeague(leagueId, { 'draft.status': 'paused' });
+    res.json({ success: true, message: 'Draft paused successfully' });
 }));
 
-// POST /api/draft/:leagueId/resume - Resume the draft (Commissioner only)
 router.post('/:leagueId/resume', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const userId = req.user.id;
-
-    const league = await League.findById(leagueId);
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is commissioner
-    if (league.commissionerId.toString() !== userId) {
-        throw new AppError('Only commissioner can resume draft', 403);
-    }
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
+    requireCommissioner(league, userId);
 
     if (league.draft?.status !== 'paused') {
         throw new AppError('Draft is not currently paused', 400);
     }
 
-    await League.findByIdAndUpdate(leagueId, {
-        'draft.status': 'live'
-    });
-
-    res.json({
-        success: true,
-        message: 'Draft resumed successfully'
-    });
+    await leagueService.updateLeague(leagueId, { 'draft.status': 'live' });
+    res.json({ success: true, message: 'Draft resumed successfully' });
 }));
 
-// POST /api/draft/:leagueId/end - End the draft (Commissioner only)
 router.post('/:leagueId/end', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const userId = req.user.id;
-
-    const league = await League.findById(leagueId);
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is commissioner
-    if (league.commissionerId.toString() !== userId) {
-        throw new AppError('Only commissioner can end draft', 403);
-    }
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
+    requireCommissioner(league, userId);
 
     if (league.draft?.status === 'completed') {
         throw new AppError('Draft is already completed', 400);
     }
 
-    await League.findByIdAndUpdate(leagueId, {
+    await leagueService.updateLeague(leagueId, {
         'draft.status': 'completed',
         'draft.endTime': new Date(),
-        'status': 'active' // Move league to active status
+        status: 'active',
     });
 
-    res.json({
-        success: true,
-        message: 'Draft ended successfully'
-    });
+    res.json({ success: true, message: 'Draft ended successfully' });
 }));
 
-// GET /api/draft/:leagueId/order - Get current draft order
 router.get('/:leagueId/order', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const userId = req.user.id;
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
 
-    const league = await League.findById(leagueId)
-        .populate('draft.draftOrder', 'teamName ownerId');
-
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is part of this league
-    const userTeam = league.teams.find(team => team.ownerId.toString() === userId);
+    const userTeam = leagueService.findUserTeam(league.teams, userId);
     if (!userTeam) {
         throw new AppError('Not authorized to access this league', 403);
     }
@@ -378,58 +296,36 @@ router.get('/:leagueId/order', asyncHandler(async (req, res) => {
         data: {
             draftOrder: league.draft?.draftOrder || [],
             currentPick: league.draft?.currentPick || 0,
-            currentRound: league.draft?.currentRound || 1
-        }
+            currentRound: league.draft?.currentRound || 1,
+        },
     });
 }));
 
-// POST /api/draft/:leagueId/order - Set draft order (Commissioner only)
 router.post('/:leagueId/order', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
     const { draftOrder } = req.body;
-    const userId = req.user.id;
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
+    requireCommissioner(league, userId);
 
-    const league = await League.findById(leagueId);
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is commissioner
-    if (league.commissionerId.toString() !== userId) {
-        throw new AppError('Only commissioner can set draft order', 403);
-    }
-
-    // Validate draft order
     if (!draftOrder || draftOrder.length !== league.teams.length) {
         throw new AppError('Draft order must include all teams', 400);
     }
 
-    await League.findByIdAndUpdate(leagueId, {
+    await leagueService.updateLeague(leagueId, {
         'draft.draftOrder': draftOrder,
-        'draft.status': 'order_set'
+        'draft.status': 'order_set',
     });
 
-    res.json({
-        success: true,
-        message: 'Draft order set successfully'
-    });
+    res.json({ success: true, message: 'Draft order set successfully' });
 }));
 
-// GET /api/draft/:leagueId/history - Get draft history
 router.get('/:leagueId/history', asyncHandler(async (req, res) => {
     const { leagueId } = req.params;
-    const userId = req.user.id;
+    const userId = getUserId(req);
+    const league = await getLeagueOrThrow(leagueId);
 
-    const league = await League.findById(leagueId)
-        .populate('draft.draftedPlayers.playerId', 'name position nflTeam rank')
-        .populate('draft.draftedPlayers.teamId', 'teamName');
-
-    if (!league) {
-        throw new AppError('League not found', 404);
-    }
-
-    // Check if user is part of this league
-    const userTeam = league.teams.find(team => team.ownerId.toString() === userId);
+    const userTeam = leagueService.findUserTeam(league.teams, userId);
     if (!userTeam) {
         throw new AppError('Not authorized to access this league', 403);
     }
@@ -439,10 +335,10 @@ router.get('/:leagueId/history', asyncHandler(async (req, res) => {
         data: {
             draftedPlayers: league.draft?.draftedPlayers || [],
             picks: league.draft?.picks || [],
-            startTime: league.draft?.startTime,
-            endTime: league.draft?.endTime
-        }
+            startTime: league.draft?.startTime || league.draft?.startedAt,
+            endTime: league.draft?.endTime,
+        },
     });
 }));
 
-module.exports = router; 
+module.exports = router;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails } from '../utils/helpers.js';
+import { isTeamSalaryCapEnabled, isPlayerSalaryEnabled } from '../constants/leagueDefaults.js';
 import { appId } from '../config/firebase.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
 
@@ -16,6 +17,8 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
     const [selectedTeams, setSelectedTeams] = useState([]);
     const [tradeOffers, setTradeOffers] = useState({});
     const [isCommissioner, setIsCommissioner] = useState(false);
+    const leagueSettings = currentLeague?.settings || {};
+    const salaryRulesEnabled = isTeamSalaryCapEnabled(leagueSettings) && isPlayerSalaryEnabled(leagueSettings);
 
     // Initialize selected teams when currentTeamId is available
     useEffect(() => {
@@ -171,6 +174,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         }
 
         // Check salary cap compliance for each team
+        if (salaryRulesEnabled) {
         for (const teamId of selectedTeams) {
             const team = teamsData.find(t => t.id === teamId);
             const offer = tradeOffers[teamId];
@@ -201,6 +205,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             if (newSalary > salaryCap) {
                 return { valid: false, message: `${team.teamName} would exceed salary cap after trade.` };
             }
+        }
         }
 
         return { valid: true, message: "Trade is valid!" };
@@ -452,9 +457,11 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                 </div>
                             </div>
 
-                            <div className="text-sm text-emerald-300">
-                                <p>Salary Cap Impact: ${offer.salaryCap}</p>
-                            </div>
+                            {salaryRulesEnabled && (
+                                <div className="text-sm text-emerald-300">
+                                    <p>Salary Cap Impact: ${offer.salaryCap}</p>
+                                </div>
+                            )}
                         </div>
                     );
                 })}
@@ -525,7 +532,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                                 <div className="text-sm text-emerald-300">
                                                     <p>Players: {offer?.players?.length || 0}</p>
                                                     <p>Draft Picks: {offer?.draftPicks?.length || 0}</p>
-                                                    <p>Salary: ${offer?.salaryCap || 0}</p>
+                                                    {salaryRulesEnabled && <p>Salary: ${offer?.salaryCap || 0}</p>}
                                                 </div>
                                             </div>
                                         );

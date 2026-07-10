@@ -16,6 +16,8 @@ const {
 admin.initializeApp();
 
 const { syncSleeperPlayersScheduled } = require('./sleeperPlayerSync.js');
+const { runSleeperPlayerSync } = require('./sleeperSyncRunner.js');
+const { runProjectionScrape } = require('./projectionScrapeRunner.js');
 exports.syncSleeperPlayersScheduled = syncSleeperPlayersScheduled;
 
 // CORS configuration
@@ -2502,3 +2504,136 @@ const handleCORS = (req, res, next) => {
     
     next();
 };
+
+// =====================================================================================
+// === PYTHON HEAVY OPERATIONS (NON-BLOCKING CHILD PROCESSES) ==========================
+// =====================================================================================
+
+/**
+ * HTTP endpoint to run draftEngine.py operations without blocking the event loop.
+ * Body: { "function": "analyze_draft_strategy", "args": { ... } }
+ */
+exports.runDraftEngine = functions.https.onRequest(async (req, res) => {
+    return cors(req, res, async () => {
+        try {
+            if (req.method !== 'POST') {
+                return res.status(405).json({ error: 'Method not allowed' });
+            }
+
+            const { function: operation, args } = req.body || {};
+            if (!operation) {
+                return res.status(400).json({ error: 'function name is required' });
+            }
+
+            const result = await pythonBridge.runDraftEngineOperation(operation, args || {});
+            return res.json({ success: true, result });
+        } catch (error) {
+            console.error('runDraftEngine error:', error);
+            return res.status(500).json({ error: error.message || 'Draft engine execution failed' });
+        }
+    });
+});
+
+/**
+ * Pub/Sub worker for async draft engine jobs.
+ * Publish JSON: { "function": "calculate_optimal_pick", "args": { ... } }
+ */
+exports.runDraftEngineJob = functions.pubsub.topic('draft-engine-jobs').onPublish(async (message) => {
+    const payload = message.json || {};
+    const operation = payload.function;
+    const args = payload.args || {};
+
+    if (!operation) {
+        throw new Error('Pub/Sub message must include a function name');
+    }
+
+    console.log(`Running draft engine job: ${operation}`);
+    return pythonBridge.runDraftEngineOperation(operation, args);
+});
+
+/**
+ * HTTP endpoint to trigger the full Sleeper sync (players + weekly stats).
+ */
+exports.syncSleeperPlayersFull = functions
+    .runWith({ timeoutSeconds: 540, memory: '1GB' })
+    .https.onRequest(async (req, res) => {
+        return cors(req, res, async () => {
+            try {
+                const body = req.method === 'POST' ? (req.body || {}) : {};
+                const query = req.query || {};
+
+                const result = await runSleeperPlayerSync({
+                    skipPlayers: body.skipPlayers === true || query.skipPlayers === 'true',
+                    skipWeeklyStats: body.skipWeeklyStats === true || query.skipWeeklyStats === 'true',
+                    seasonType: body.seasonType || query.seasonType,
+                    season: body.season || query.season,
+                    week: body.week !== undefined ? body.week : query.week,
+                    weeklyStatsForAllPlayers: body.weeklyStatsForAllPlayers === true
+                        || query.weeklyStatsForAllPlayers === 'true',
+                });
+
+                return res.json(result);
+            } catch (error) {
+                console.error('syncSleeperPlayersFull error:', error);
+                return res.status(500).json({ success: false, error: error.message });
+            }
+        });
+    });
+
+/**
+ * Scheduled full Sleeper sync (players + weekly stats) — runs after the lightweight sync.
+ */
+exports.syncSleeperPlayersFullScheduled = functions
+    .runWith({ timeoutSeconds: 540, memory: '1GB' })
+    .pubsub.schedule('0 4 * * *')
+    .timeZone('America/New_York')
+    .onRun(async () => {
+        console.log('Starting scheduled full Sleeper player sync');
+        const result = await runSleeperPlayerSync();
+        console.log('Scheduled full Sleeper player sync completed', result);
+        return result;
+    });
+
+/**
+ * Scheduled FantasyPros consensus projection scrape — every Tuesday at 6:00 AM ET.
+ * Runs in a child process with strict timeout and non-fatal error handling.
+ */
+exports.scrapeProjectionsScheduled = functions
+    .runWith({ timeoutSeconds: 300, memory: '512MB' })
+    .pubsub.schedule('0 6 * * 2')
+    .timeZone('America/New_York')
+    .onRun(async () => {
+        console.log('Starting scheduled FantasyPros projection scrape');
+
+        try {
+            const result = await runProjectionScrape({ timeoutMs: 240000 });
+
+            if (result?.scrape_errors?.length) {
+                console.warn(
+                    'Projection scrape completed with partial errors',
+                    result.scrape_errors,
+                );
+            }
+
+            console.log('Scheduled FantasyPros projection scrape completed', {
+                totalScraped: result?.total_scraped,
+                totalMatched: result?.total_matched,
+                totalWritten: result?.total_written,
+                totalUnmatched: result?.total_unmatched,
+            });
+
+            return result;
+        } catch (error) {
+            console.error(
+                'Scheduled FantasyPros projection scrape failed (non-fatal):',
+                error.message,
+                error.stack,
+            );
+
+            return {
+                success: false,
+                error: error.message,
+                failedAt: new Date().toISOString(),
+            };
+        }
+    });

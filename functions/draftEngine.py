@@ -1,6 +1,7 @@
 import requests
 import json
 import random
+import sys
 from datetime import datetime, timedelta
 
 class DraftEngine:
@@ -59,34 +60,67 @@ class DraftEngine:
         
         return best_pick
     
-    def generate_draft_order(self, team_count):
-        """Generate random draft order"""
-        return list(range(1, team_count + 1))
-    
+    def generate_draft_order(self, teams=None, draft_type='snake', team_count=None):
+        """Generate draft order from team list or team count."""
+        count = len(teams) if teams else (team_count or 0)
+        if count <= 0:
+            return []
+        order = list(range(count))
+        random.shuffle(order)
+        return order
+
     def analyze_draft_strategy(self, league_settings, team_data):
         """Analyze draft strategy for a team"""
         return {
             'recommended_positions': ['QB', 'RB', 'WR', 'TE'],
             'avoid_positions': ['K', 'DEF'],
+            'draft_strategy': 'balanced',
+            'risk_tolerance': 'medium',
+            'projected_finish': 'middle',
             'strategy': 'Best Player Available',
-            'risk_tolerance': 'Medium'
-        }
-    
-    def process_draft_pick(self, pick_data):
-        """Process a draft pick"""
-        return {
-            'success': True,
-            'pick_number': pick_data.get('pick_number', 1),
-            'player': pick_data.get('player'),
-            'timestamp': datetime.now().isoformat()
         }
 
-if __name__ == "__main__":
-    # Test the draft engine
+    def process_draft_pick(self, league_id=None, team_id=None, player_id=None, draft_state=None, pick_data=None):
+        """Process a draft pick"""
+        payload = pick_data or {
+            'league_id': league_id,
+            'team_id': team_id,
+            'player_id': player_id,
+            'draft_state': draft_state or {},
+        }
+        return {
+            'success': True,
+            'pick_number': payload.get('pick_number', 1),
+            'player': payload.get('player') or payload.get('player_id'),
+            'timestamp': datetime.now().isoformat(),
+            'draft_state': payload.get('draft_state', {}),
+        }
+
+
+def _dispatch_cli():
+    """Read JSON from stdin, invoke a DraftEngine method, write JSON to stdout."""
+    raw = sys.stdin.read()
+    payload = json.loads(raw) if raw.strip() else {}
+    function_name = payload.get('function')
+    args = payload.get('args', {})
+
     engine = DraftEngine()
-    players = engine.fetch_player_data(10)
-    print(f"Fetched {len(players)} players")
-    
-    if players:
-        optimal = engine.calculate_optimal_pick(players, {'QB': 1, 'RB': 2})
-        print(f"Optimal pick: {optimal['name'] if optimal else 'None'}") 
+    if not function_name or not hasattr(engine, function_name):
+        raise ValueError(f'Unknown draft engine function: {function_name}')
+
+    method = getattr(engine, function_name)
+    result = method(**args)
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    if not sys.stdin.isatty():
+        _dispatch_cli()
+    else:
+        engine = DraftEngine()
+        players = engine.fetch_player_data(10)
+        print(f"Fetched {len(players)} players")
+
+        if players:
+            optimal = engine.calculate_optimal_pick(players, {'QB': 1, 'RB': 2})
+            print(f"Optimal pick: {optimal['name'] if optimal else 'None'}") 

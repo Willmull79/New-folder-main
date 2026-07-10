@@ -212,6 +212,8 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
     const [numWeeks, setNumWeeks] = useState(14);
     const [playoffWeeks, setPlayoffWeeks] = useState(3);
     const [teamSalary, setTeamSalary] = useState(1000);
+    const [useTeamSalaryCap, setUseTeamSalaryCap] = useState(true);
+    const [usePlayerSalaries, setUsePlayerSalaries] = useState(true);
     const [playersToDrop, setPlayersToDrop] = useState(5);
     const [salaryRaisePercentage, setSalaryRaisePercentage] = useState(10);
     const [minPlayerSalary, setMinPlayerSalary] = useState(0.5);
@@ -263,7 +265,7 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
     const handleCreateLeague = async () => {
         console.log('handleCreateLeague called');
         if (!leagueName.trim()) return showMessage("League name cannot be empty.", "error");
-        if (teamSalary > 5000) return showMessage("Team salary cannot exceed 5000.", "error");
+        if (useTeamSalaryCap && teamSalary > 5000) return showMessage("Team salary cannot exceed 5000.", "error");
         setIsLoading(true);
         try {
             const newLeagueRef = db.collection("leagues").doc();
@@ -287,10 +289,12 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                     numTeams: Number(numTeams),
                     numWeeks: Number(numWeeks),
                     playoffWeeks: Number(playoffWeeks),
-                    teamSalary: Number(teamSalary),
+                    useTeamSalaryCap,
+                    usePlayerSalaries,
+                    teamSalary: useTeamSalaryCap ? Number(teamSalary) : null,
                     playersToDrop: Number(playersToDrop),
-                    salaryRaisePercentage: Number(salaryRaisePercentage),
-                    minPlayerSalary: Number(minPlayerSalary),
+                    salaryRaisePercentage: usePlayerSalaries ? Number(salaryRaisePercentage) : null,
+                    minPlayerSalary: usePlayerSalaries ? Number(minPlayerSalary) : null,
                     scoringRules: scoringRules,
                     rosterLimits: rosterLimits,
                     defenseFormat: defenseFormat,
@@ -389,7 +393,7 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                     </label>
                     <label className="block">
                         <span className="text-emerald-200">Team Salary Cap</span>
-                        <input type="number" max="5000" value={teamSalary} onChange={e => setTeamSalary(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200" />
+                        <input type="number" max="5000" value={teamSalary} onChange={e => setTeamSalary(e.target.value)} disabled={!useTeamSalaryCap} className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 disabled:opacity-50" />
                     </label>
                     <label className="block">
                         <span className="text-emerald-200">Players to Drop</span>
@@ -397,11 +401,11 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                     </label>
                     <label className="block">
                         <span className="text-emerald-200">Salary Raise %</span>
-                        <input type="number" value={salaryRaisePercentage} onChange={e => setSalaryRaisePercentage(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200" />
+                        <input type="number" value={salaryRaisePercentage} onChange={e => setSalaryRaisePercentage(e.target.value)} disabled={!usePlayerSalaries} className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 disabled:opacity-50" />
                     </label>
                     <label className="block">
                         <span className="text-emerald-200">Min Player Salary</span>
-                        <input type="number" value={minPlayerSalary} onChange={e => setMinPlayerSalary(e.target.value)} min="0.5" max="10" step="0.01" className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200" />
+                        <input type="number" value={minPlayerSalary} onChange={e => setMinPlayerSalary(e.target.value)} min="0.5" max="10" step="0.01" disabled={!usePlayerSalaries} className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 disabled:opacity-50" />
                     </label>
                     <label className="block">
                         <span className="text-emerald-200">Draft Type</span>
@@ -411,6 +415,28 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                             <option value="snake">Snake</option>
                         </select>
                     </label>
+                    <div className="sm:col-span-2 md:col-span-3">
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={useTeamSalaryCap} 
+                                onChange={(e) => setUseTeamSalaryCap(e.target.checked)} 
+                                className="form-checkbox h-5 w-5 bg-emerald-100 border-emerald-300 rounded text-purple-500 focus:ring-purple-500"
+                            />
+                            <span className="text-emerald-200">Enable Team Salary Cap</span>
+                        </label>
+                    </div>
+                    <div className="sm:col-span-2 md:col-span-3">
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={usePlayerSalaries} 
+                                onChange={(e) => setUsePlayerSalaries(e.target.checked)} 
+                                className="form-checkbox h-5 w-5 bg-emerald-100 border-emerald-300 rounded text-purple-500 focus:ring-purple-500"
+                            />
+                            <span className="text-emerald-200">Enable Player Salaries</span>
+                        </label>
+                    </div>
                     <div className="sm:col-span-2 md:col-span-3">
                         <label className="flex items-center space-x-3 cursor-pointer">
                             <input 

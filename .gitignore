@@ -4,6 +4,10 @@ config.js
 # Node modules
 node_modules/
 
+# Build output
+/dist/
+dist/
+
 # Firebase cache
 .firebase/
 
@@ -11,6 +15,13 @@ node_modules/
 .env
 .env.local
 .env.production
+backend/config.env
+
+# Firebase service account keys
+serviceAccountKey.json
+**/serviceAccountKey.json
+**/*-firebase-adminsdk-*.json
+**/*service*account*.json
 
 # IDE files
 .vscode/
@@ -18,4 +29,4 @@ node_modules/
 
 # OS files
 .DS_Store
-Thumbs.db 
+Thumbs.db

@@ -26,7 +26,6 @@
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "joi": "^17.11.0",
-    "mongoose": "^8.0.3",
     "redis": "^4.6.10",
     "socket.io": "^4.7.4",
     "node-cron": "^3.0.3",
@@ -64,7 +63,7 @@
     "api",
     "express",
     "nodejs",
-    "mongodb",
+    "firestore",
     "redis"
   ],
   "author": "Fantasy Dynasty Central",

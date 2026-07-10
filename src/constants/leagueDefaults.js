@@ -174,3 +174,16 @@ export const STANDARD_SCORING_RULES = {
 export const isDefensivePlayerPosition = (position) => ['DL', 'LB', 'DB'].includes(position);
 
 export const isTeamDefensePosition = (position) => ['DST', 'DEF', 'D/ST'].includes(position);
+
+export const isTeamSalaryCapEnabled = (settings = {}) => settings.useTeamSalaryCap !== false;
+
+export const isPlayerSalaryEnabled = (settings = {}) => settings.usePlayerSalaries !== false;
+
+export const formatPlayerLabel = (player, settings = {}) => {
+    if (!player) return '';
+    const base = `${player.name} (${player.position})`;
+    if (!isPlayerSalaryEnabled(settings)) {
+        return base;
+    }
+    return `${base} - $${player.salary ?? 0}`;
+};

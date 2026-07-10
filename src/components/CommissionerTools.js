@@ -12,6 +12,8 @@ import {
     IDP_STARTING_SLOTS,
     DST_STARTING_SLOTS,
     splitStartingSlots,
+    isTeamSalaryCapEnabled,
+    isPlayerSalaryEnabled,
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
@@ -32,6 +34,8 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
     const [numWeeks, setNumWeeks] = useState(currentLeague?.settings?.numWeeks || 14);
     const [playoffWeeks, setPlayoffWeeks] = useState(currentLeague?.settings?.playoffWeeks || 3);
     const [teamSalary, setTeamSalary] = useState(currentLeague?.settings?.teamSalary || 1000);
+    const [useTeamSalaryCap, setUseTeamSalaryCap] = useState(isTeamSalaryCapEnabled(currentLeague?.settings));
+    const [usePlayerSalaries, setUsePlayerSalaries] = useState(isPlayerSalaryEnabled(currentLeague?.settings));
     const [playersToDrop, setPlayersToDrop] = useState(currentLeague?.settings?.playersToDrop || 5);
     const [salaryRaisePercentage, setSalaryRaisePercentage] = useState(currentLeague?.settings?.salaryRaisePercentage || 10);
     const [minPlayerSalary, setMinPlayerSalary] = useState(currentLeague?.settings?.minPlayerSalary || 0.5);
@@ -74,6 +78,8 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
             setNumWeeks(currentLeague.settings?.numWeeks || 14);
             setPlayoffWeeks(currentLeague.settings?.playoffWeeks || 3);
             setTeamSalary(currentLeague.settings?.teamSalary || 1000);
+            setUseTeamSalaryCap(isTeamSalaryCapEnabled(currentLeague.settings));
+            setUsePlayerSalaries(isPlayerSalaryEnabled(currentLeague.settings));
             setPlayersToDrop(currentLeague.settings?.playersToDrop || 5);
             setSalaryRaisePercentage(currentLeague.settings?.salaryRaisePercentage || 10);
             setMinPlayerSalary(currentLeague.settings?.minPlayerSalary || 0.5);
@@ -229,10 +235,12 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                     numTeams: Number(numTeams),
                     numWeeks: Number(numWeeks),
                     playoffWeeks: Number(playoffWeeks),
-                    teamSalary: Number(teamSalary),
+                    useTeamSalaryCap,
+                    usePlayerSalaries,
+                    teamSalary: useTeamSalaryCap ? Number(teamSalary) : null,
                     playersToDrop: Number(playersToDrop),
-                    salaryRaisePercentage: Number(salaryRaisePercentage),
-                    minPlayerSalary: Number(minPlayerSalary),
+                    salaryRaisePercentage: usePlayerSalaries ? Number(salaryRaisePercentage) : null,
+                    minPlayerSalary: usePlayerSalaries ? Number(minPlayerSalary) : null,
                     scoringRules: scoringRules,
                     rosterLimits: rosterLimits,
                     defenseFormat: defenseFormat,
@@ -388,7 +396,8 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                                 max="5000" 
                                 value={teamSalary} 
                                 onChange={e => setTeamSalary(e.target.value)} 
-                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors" 
+                                disabled={!useTeamSalaryCap}
+                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors disabled:opacity-50" 
                             />
                         </label>
                         <label className="block">
@@ -406,7 +415,8 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                                 type="number" 
                                 value={salaryRaisePercentage} 
                                 onChange={e => setSalaryRaisePercentage(e.target.value)} 
-                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors" 
+                                disabled={!usePlayerSalaries}
+                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors disabled:opacity-50" 
                             />
                         </label>
                         <label className="block">
@@ -418,9 +428,32 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                                 min="0.5" 
                                 max="10" 
                                 step="0.01" 
-                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors" 
+                                disabled={!usePlayerSalaries}
+                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors disabled:opacity-50" 
                             />
                         </label>
+                        <div className="sm:col-span-2 md:col-span-3">
+                            <label className="flex items-center space-x-3 cursor-pointer p-3 bg-emerald-700 rounded-md hover:bg-emerald-600 transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={useTeamSalaryCap}
+                                    onChange={(e) => setUseTeamSalaryCap(e.target.checked)}
+                                    className="form-checkbox h-5 w-5 bg-emerald-100 border-emerald-300 rounded text-purple-500 focus:ring-purple-500"
+                                />
+                                <span className="text-emerald-200 font-medium">Enable Team Salary Cap</span>
+                            </label>
+                        </div>
+                        <div className="sm:col-span-2 md:col-span-3">
+                            <label className="flex items-center space-x-3 cursor-pointer p-3 bg-emerald-700 rounded-md hover:bg-emerald-600 transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={usePlayerSalaries}
+                                    onChange={(e) => setUsePlayerSalaries(e.target.checked)}
+                                    className="form-checkbox h-5 w-5 bg-emerald-100 border-emerald-300 rounded text-purple-500 focus:ring-purple-500"
+                                />
+                                <span className="text-emerald-200 font-medium">Enable Player Salaries</span>
+                            </label>
+                        </div>
                         <div className="sm:col-span-2 md:col-span-3">
                             <label className="flex items-center space-x-3 cursor-pointer p-3 bg-emerald-700 rounded-md hover:bg-emerald-600 transition-colors">
                                 <input

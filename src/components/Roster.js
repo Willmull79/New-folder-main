@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
-import { buildLineupDisplayOrder, INITIAL_ROSTER_LIMITS, isDefensivePlayerPosition, isTeamDefensePosition } from '../constants/leagueDefaults.js';
+import { buildLineupDisplayOrder, INITIAL_ROSTER_LIMITS, isDefensivePlayerPosition, isTeamDefensePosition, formatPlayerLabel } from '../constants/leagueDefaults.js';
 import { appId } from '../config/firebase.js';
 
 export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handleLeaveLeague, onPlayerTransaction, currentTeamId }) => {
@@ -14,6 +14,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
     const [waiverPosition, setWaiverPosition] = useState(1);
     const playerSelectRef = useRef(null);
     const rosterLimits = currentLeague?.settings?.rosterLimits || INITIAL_ROSTER_LIMITS;
+    const leagueSettings = currentLeague?.settings || {};
     const lineupDisplayOrder = buildLineupDisplayOrder(currentLeague?.settings?.startingSlots);
     const isAuctionComplete = currentLeague?.auction?.status === 'complete';
 
@@ -218,7 +219,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                     <div className="flex items-center gap-4 truncate">
                                         <span className="font-bold text-purple-300 w-16 flex-shrink-0">{slot.replace(/(\d+)/, ' $1')}</span>
                                         {player ? (
-                                             <span className="truncate">{player.name} ({player.position}) - ${player.salary}</span>
+                                             <span className="truncate">{formatPlayerLabel(player, leagueSettings)}</span>
                                         ) : (
                                             <span className="text-emerald-400">-- Empty --</span>
                                         )}
@@ -244,7 +245,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                         <div className="flex items-center gap-4 truncate">
                                             <span className="font-bold text-purple-300 w-20 flex-shrink-0">{`Bench ${index + 1}`}</span>
                                             {player ? (
-                                                <span className="truncate">{player.name} ({player.position}) - ${player.salary}</span>
+                                                <span className="truncate">{formatPlayerLabel(player, leagueSettings)}</span>
                                             ) : (
                                                 <span className="text-emerald-400">-- Empty --</span>
                                             )}
@@ -271,7 +272,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                         <div className="flex items-center gap-4 truncate">
                                             <span className="font-bold text-red-300 w-20 flex-shrink-0">{`IR ${index + 1}`}</span>
                                             {player ? (
-                                                <span className="truncate">{player.name} ({player.position}) - ${player.salary}</span>
+                                                <span className="truncate">{formatPlayerLabel(player, leagueSettings)}</span>
                                             ) : (
                                                 <span className="text-emerald-400">-- Empty --</span>
                                             )}
