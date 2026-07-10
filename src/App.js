@@ -14,6 +14,7 @@ const DraftCenter = React.lazy(() => import('./components/DraftCenter.js'));
 const TradeCenter = React.lazy(() => import('./components/TradeCenter.js').then(module => ({ default: module.TradeCenter })));
 const WaiverWire = React.lazy(() => import('./components/WaiverWire.js').then(module => ({ default: module.WaiverWire })));
 const Standings = React.lazy(() => import('./components/Standings.js'));
+const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
 
 // Loading component for lazy-loaded components
@@ -223,7 +224,19 @@ const App = () => {
                             {activeTab === 'draft-center' && currentLeague && currentTeam && <DraftCenter currentLeague={currentLeague} currentTeam={currentTeam} allPlayers={allPlayers} showMessage={showMessage} currentTeamId={currentTeamId} userId={userId} />}
 
                             {activeTab === 'standings' && currentLeague && (
-                                <Standings currentLeague={currentLeague} showMessage={showMessage} />
+                                <Standings
+                                    currentLeague={currentLeague}
+                                    showMessage={showMessage}
+                                />
+                            )}
+                            {activeTab === 'live-scores' && currentLeague && (
+                                <LiveScores
+                                    currentLeague={currentLeague}
+                                    currentTeam={currentTeam}
+                                    currentTeamId={currentTeamId}
+                                    allPlayers={allPlayers}
+                                    showMessage={showMessage}
+                                />
                             )}
                             {activeTab === 'waiver-wire' && currentLeague && currentTeam && (
                                 <WaiverWire

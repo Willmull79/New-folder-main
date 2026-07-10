@@ -1,100 +1,199 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useFirebase } from '../contexts/FirebaseContext.js';
+import backgroundScoring, {
+    calculateTeamWeeklyScore,
+    fetchSleeperNflState,
+    fetchSleeperWeekStats,
+} from '../utils/backgroundScoring.js';
 
-const LiveScores = ({ showMessage }) => {
-    const [liveGames, setLiveGames] = useState([]);
+const buildPlayerMeta = (allPlayers = []) => {
+    const meta = {};
+    allPlayers.forEach((player) => {
+        if (!player?.id) return;
+        meta[String(player.id)] = {
+            name: player.name || `${player.first_name || ''} ${player.last_name || ''}`.trim(),
+            position: player.position || null,
+            team: player.nflTeam || player.team || null,
+        };
+    });
+    return meta;
+};
+
+/**
+ * Mid-week live fantasy scoring.
+ * Does not update official Standings (those finalize on Tuesdays).
+ */
+const LiveScores = ({
+    currentLeague,
+    currentTeam,
+    currentTeamId,
+    allPlayers = [],
+    showMessage,
+}) => {
+    const { db } = useFirebase();
+    const [teamsData, setTeamsData] = useState([]);
+    const [teamScores, setTeamScores] = useState([]);
+    const [weekContext, setWeekContext] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [playerUpdates, setPlayerUpdates] = useState([]);
-    const [injuries, setInjuries] = useState([]);
     const [autoRefresh, setAutoRefresh] = useState(true);
+    const [expandedTeamId, setExpandedTeamId] = useState(currentTeamId || null);
+    const [lastUpdated, setLastUpdated] = useState(null);
+    const showMessageRef = useRef(showMessage);
+    const teamsDataRef = useRef([]);
+    const hasScoredRef = useRef(false);
 
-    // Load live scores
-    const loadLiveScores = async () => {
+    useEffect(() => {
+        showMessageRef.current = showMessage;
+    }, [showMessage]);
+
+    useEffect(() => {
+        teamsDataRef.current = teamsData;
+    }, [teamsData]);
+
+    useEffect(() => {
+        if (!db || !currentLeague?.id) {
+            setTeamsData([]);
+            return undefined;
+        }
+
+        const unsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
+            .onSnapshot((snapshot) => {
+                const teams = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+                setTeamsData(teams);
+            }, (error) => {
+                console.error('Error listening to teams for live scores:', error);
+                showMessageRef.current?.('Error loading teams for live scores.', 'error');
+            });
+
+        return () => unsubscribe();
+    }, [db, currentLeague?.id]);
+
+    const refreshFantasyScores = useCallback(async ({ silent = false } = {}) => {
+        const teams = teamsDataRef.current;
+        if (!currentLeague?.id || teams.length === 0) return;
+
         setLoading(true);
         try {
-            const games = await window.fantasyAPIService.getLiveGameData();
-            setLiveGames(games);
-        } catch (error) {
-            console.error('Failed to load live scores:', error);
-            showMessage('Failed to load live scores', 'error');
-        } finally {
-            setLoading(false);
-        }
-    };
+            const state = await fetchSleeperNflState();
+            const weekStats = await fetchSleeperWeekStats({
+                seasonType: state.seasonType,
+                season: state.season,
+                week: state.week,
+            });
+            const playerMeta = buildPlayerMeta(allPlayers);
+            const scoringRules = currentLeague.settings?.scoringRules || {};
 
-    // Load injury updates
-    const loadInjuries = async () => {
-        try {
-            const injuryData = await window.fantasyAPIService.getInjuryUpdates();
-            setInjuries(injuryData);
-        } catch (error) {
-            console.error('Failed to load injuries:', error);
-        }
-    };
+            if (db) {
+                backgroundScoring.db = db;
+            }
 
-    // Update player information
-    const updatePlayer = async (playerName, position) => {
-        try {
-            const updatedPlayer = await window.fantasyAPIService.updatePlayerInfo(playerName, position);
-            if (updatedPlayer) {
-                setPlayerUpdates(prev => {
-                    const filtered = prev.filter(p => p.name !== playerName);
-                    return [...filtered, updatedPlayer];
+            const scoredTeams = [];
+
+            for (const team of teams) {
+                const result = await calculateTeamWeeklyScore({
+                    lineup: team.roster?.lineup,
+                    scoringRules,
+                    weekStats,
+                    playerMeta,
+                    week: state.week,
+                    season: state.season,
+                    seasonType: state.seasonType,
                 });
-                showMessage(`Updated ${playerName}'s information`, 'success');
+
+                scoredTeams.push({
+                    teamId: team.id,
+                    teamName: team.teamName || 'Unnamed Team',
+                    isCurrentTeam: team.id === currentTeamId,
+                    totalScore: result.totalScore,
+                    players: result.players,
+                    errors: result.errors,
+                });
+
+                // Persist live scores only — never overwrite official standings/pointsFor
+                if (db) {
+                    await backgroundScoring.updateTeamScore(
+                        currentLeague.id,
+                        team,
+                        scoringRules,
+                        state,
+                        weekStats,
+                        playerMeta,
+                    );
+                }
+            }
+
+            scoredTeams.sort((a, b) => b.totalScore - a.totalScore);
+            setTeamScores(scoredTeams);
+            setWeekContext(state);
+            setLastUpdated(new Date());
+            hasScoredRef.current = true;
+
+            if (!silent) {
+                showMessageRef.current?.(
+                    `Live fantasy scores updated for week ${state.week}.`,
+                    'success',
+                );
             }
         } catch (error) {
-            console.error('Failed to update player:', error);
-            showMessage(`Failed to update ${playerName}`, 'error');
-        }
-    };
-
-    // Batch update players
-    const batchUpdatePlayers = async (players) => {
-        setLoading(true);
-        try {
-            const updates = await window.fantasyAPIService.batchUpdatePlayers(players);
-            setPlayerUpdates(updates);
-            showMessage(`Updated ${updates.length} players`, 'success');
-        } catch (error) {
-            console.error('Failed to batch update players:', error);
-            showMessage('Failed to update players', 'error');
+            console.error('Failed to refresh live fantasy scores:', error);
+            showMessageRef.current?.(`Failed to load live scores: ${error.message}`, 'error');
         } finally {
             setLoading(false);
         }
-    };
+    }, [currentLeague, allPlayers, currentTeamId, db]);
 
-    // Start live updates
+    // Score once when teams first load for this league; optional 60s refresh
     useEffect(() => {
-        loadLiveScores();
-        loadInjuries();
+        hasScoredRef.current = false;
+    }, [currentLeague?.id]);
 
-        if (autoRefresh) {
-            const interval = setInterval(() => {
-                loadLiveScores();
-                loadInjuries();
-            }, 30000); // Update every 30 seconds
+    useEffect(() => {
+        if (teamsData.length === 0) return undefined;
 
-            return () => clearInterval(interval);
+        if (!hasScoredRef.current) {
+            refreshFantasyScores({ silent: true });
         }
-    }, [autoRefresh]);
 
-    // Subscribe to live updates
+        if (!autoRefresh) return undefined;
+
+        const interval = setInterval(() => {
+            refreshFantasyScores({ silent: true });
+        }, 60000);
+
+        return () => clearInterval(interval);
+    }, [teamsData.length, autoRefresh, currentLeague?.id, refreshFantasyScores]);
+
     useEffect(() => {
-        const unsubscribe = window.fantasyAPIService.subscribe((data) => {
-            if (data.length > 0) {
-                setLiveGames(data);
-            }
-        });
+        if (currentTeamId) {
+            setExpandedTeamId(currentTeamId);
+        }
+    }, [currentTeamId]);
 
-        return unsubscribe;
-    }, []);
+    const myScore = teamScores.find((team) => team.teamId === currentTeamId);
+
+    if (!currentLeague) {
+        return (
+            <div className="bg-emerald-950 p-6 rounded-lg text-center text-emerald-300">
+                Select a league to view live fantasy scores.
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">
-            {/* Header */}
             <div className="bg-emerald-950 p-4 rounded-lg">
-                <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-purple-400">Live NFL Scores & Updates</h2>
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-purple-400">Live Fantasy Scores</h2>
+                        <p className="text-emerald-300 text-sm mt-1">
+                            {currentLeague.name}
+                            {weekContext ? ` · Week ${weekContext.week}` : ''}
+                            {lastUpdated ? ` · Updated ${lastUpdated.toLocaleTimeString()}` : ''}
+                        </p>
+                        <p className="text-xs text-emerald-500 mt-1">
+                            In-progress only. Official standings finalize every Tuesday.
+                        </p>
+                    </div>
                     <div className="flex items-center gap-4">
                         <label className="flex items-center gap-2 text-sm text-emerald-200">
                             <input
@@ -106,146 +205,142 @@ const LiveScores = ({ showMessage }) => {
                             Auto-refresh
                         </label>
                         <button
-                            onClick={loadLiveScores}
-                            disabled={loading}
+                            type="button"
+                            onClick={() => refreshFantasyScores({ silent: false })}
+                            disabled={loading || teamsData.length === 0}
                             className="px-4 py-2 bg-purple-800 hover:bg-purple-900 text-white rounded-md disabled:opacity-50"
                         >
-                            {loading ? 'Loading...' : 'Refresh'}
+                            {loading ? 'Scoring...' : 'Refresh'}
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* Live Games */}
+            {myScore && (
+                <div className="bg-purple-950/60 border border-purple-700 p-4 rounded-lg">
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <p className="text-sm text-purple-300">Your Team</p>
+                            <h3 className="text-xl font-bold text-white">
+                                {myScore.teamName || currentTeam?.teamName}
+                            </h3>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-3xl font-extrabold text-emerald-300">
+                                {Number(myScore.totalScore || 0).toFixed(1)}
+                            </p>
+                            <p className="text-xs text-emerald-400">live fantasy points</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="bg-emerald-950 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold mb-4 text-purple-300">Live Games</h3>
-                {liveGames.length === 0 ? (
-                    <p className="text-emerald-400">No live games currently</p>
+                <h3 className="text-lg font-semibold mb-4 text-purple-300">League Scoreboard</h3>
+
+                {loading && teamScores.length === 0 ? (
+                    <div className="flex justify-center py-10">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
+                    </div>
+                ) : teamScores.length === 0 ? (
+                    <p className="text-emerald-400">No team scores yet. Tap Refresh to calculate.</p>
                 ) : (
                     <div className="space-y-3">
-                        {liveGames.map(game => (
-                            <div key={game.id} className="bg-emerald-900 p-3 rounded-lg">
-                                <div className="flex justify-between items-center">
-                                    <div className="flex-1">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="font-semibold text-white">{game.awayTeam?.team?.name}</span>
-                                            <span className="text-xl font-bold text-white">{game.score?.away || 0}</span>
+                        {teamScores.map((team, index) => {
+                            const isExpanded = expandedTeamId === team.teamId;
+                            return (
+                                <div
+                                    key={team.teamId}
+                                    className={`rounded-lg border ${
+                                        team.isCurrentTeam
+                                            ? 'bg-purple-900/40 border-purple-600'
+                                            : 'bg-emerald-900 border-emerald-700'
+                                    }`}
+                                >
+                                    <button
+                                        type="button"
+                                        className="w-full p-4 flex justify-between items-center text-left"
+                                        onClick={() => setExpandedTeamId(isExpanded ? null : team.teamId)}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <span className="w-8 h-8 rounded-full bg-emerald-800 flex items-center justify-center font-bold text-sm">
+                                                {index + 1}
+                                            </span>
+                                            <div>
+                                                <div className="font-semibold text-white">
+                                                    {team.teamName}
+                                                    {team.isCurrentTeam ? ' (You)' : ''}
+                                                </div>
+                                                <div className="text-xs text-emerald-400">
+                                                    {team.players?.length || 0} starters scored
+                                                    {team.errors?.length
+                                                        ? ` · ${team.errors.length} missing`
+                                                        : ''}
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="flex justify-between items-center">
-                                            <span className="font-semibold text-white">{game.homeTeam?.team?.name}</span>
-                                            <span className="text-xl font-bold text-white">{game.score?.home || 0}</span>
+                                        <div className="text-right">
+                                            <div className="text-2xl font-bold text-emerald-300">
+                                                {Number(team.totalScore || 0).toFixed(1)}
+                                            </div>
+                                            <div className="text-xs text-emerald-400">
+                                                {isExpanded ? 'Hide lineup' : 'Show lineup'}
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div className="ml-4 text-right">
-                                        <div className="text-sm text-emerald-300">{game.status?.type?.description}</div>
-                                        <div className="text-xs text-emerald-400">
-                                            {new Date(game.time).toLocaleTimeString()}
+                                    </button>
+
+                                    {isExpanded && (
+                                        <div className="px-4 pb-4">
+                                            <div className="bg-emerald-950/70 rounded-md overflow-hidden">
+                                                <table className="min-w-full text-sm">
+                                                    <thead>
+                                                        <tr className="text-emerald-300 border-b border-emerald-800">
+                                                            <th className="py-2 px-3 text-left">Slot</th>
+                                                            <th className="py-2 px-3 text-left">Player</th>
+                                                            <th className="py-2 px-3 text-right">Pts</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {(team.players || []).map((player) => (
+                                                            <tr
+                                                                key={`${team.teamId}-${player.slot}`}
+                                                                className="border-b border-emerald-900/60"
+                                                            >
+                                                                <td className="py-2 px-3 text-emerald-400">
+                                                                    {player.slot}
+                                                                </td>
+                                                                <td className="py-2 px-3 text-white">
+                                                                    {player.name || player.playerId}
+                                                                    {player.position ? (
+                                                                        <span className="text-emerald-400">
+                                                                            {' '}({player.position}
+                                                                            {player.nflTeam ? ` · ${player.nflTeam}` : ''})
+                                                                        </span>
+                                                                    ) : null}
+                                                                    {player.missingStats ? (
+                                                                        <span className="ml-2 text-xs text-yellow-400">
+                                                                            no stats yet
+                                                                        </span>
+                                                                    ) : null}
+                                                                </td>
+                                                                <td className="py-2 px-3 text-right font-semibold text-emerald-300">
+                                                                    {Number(player.points || 0).toFixed(1)}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
-            </div>
-
-            {/* Player Updates */}
-            <div className="bg-emerald-950 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold mb-4 text-purple-300">Player Updates</h3>
-                <div className="mb-4">
-                    <button
-                        onClick={() => batchUpdatePlayers([
-                            { name: 'Patrick Mahomes', position: 'QB' },
-                            { name: 'Christian McCaffrey', position: 'RB' },
-                            { name: 'Justin Jefferson', position: 'WR' }
-                        ])}
-                        disabled={loading}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md disabled:opacity-50"
-                    >
-                        Update Top Players
-                    </button>
-                </div>
-                
-                {playerUpdates.length > 0 && (
-                    <div className="space-y-2">
-                        {playerUpdates.map(player => (
-                            <div key={player.id} className="bg-emerald-900 p-3 rounded-lg">
-                                <div className="flex justify-between items-center">
-                                    <div>
-                                        <div className="font-semibold text-white">{player.name}</div>
-                                        <div className="text-sm text-emerald-300">
-                                            {player.position} - {player.nflTeam} - {player.status}
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-lg font-bold text-emerald-400">
-                                            {player.fantasyPoints} pts
-                                        </div>
-                                        <div className="text-xs text-emerald-400">
-                                            Updated: {new Date(player.lastUpdated).toLocaleTimeString()}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* Injury Updates */}
-            <div className="bg-emerald-950 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold mb-4 text-red-300">Injury Updates</h3>
-                {injuries.length === 0 ? (
-                    <p className="text-emerald-400">No injury updates available</p>
-                ) : (
-                    <div className="space-y-2">
-                        {injuries.slice(0, 10).map((player, index) => (
-                            <div key={index} className="bg-emerald-900 p-3 rounded-lg">
-                                <div className="flex justify-between items-center">
-                                    <div>
-                                        <div className="font-semibold text-white">{player.fullName}</div>
-                                        <div className="text-sm text-emerald-300">
-                                            {player.position?.abbreviation} - {player.team}
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-sm text-red-400 font-semibold">
-                                            {player.status?.description}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* API Status */}
-            <div className="bg-emerald-950 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold mb-4 text-purple-300">API Status</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                        <span className="text-emerald-300">Cache Size:</span>
-                        <span className="ml-2 text-white">
-                            {window.fantasyAPIService.getCacheStats().size} items
-                        </span>
-                    </div>
-                    <div>
-                        <span className="text-emerald-300">Auto-refresh:</span>
-                        <span className={`ml-2 ${autoRefresh ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {autoRefresh ? 'Enabled' : 'Disabled'}
-                        </span>
-                    </div>
-                </div>
-                <button
-                    onClick={() => window.fantasyAPIService.clearCache()}
-                    className="mt-2 px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded-md"
-                >
-                    Clear Cache
-                </button>
             </div>
         </div>
     );
 };
 
-export default LiveScores; 
+export default LiveScores;

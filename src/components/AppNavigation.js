@@ -7,6 +7,7 @@ const LEAGUE_TABS = [
     { id: 'waiver-wire', label: 'Waiver Wire', shortLabel: 'Waivers' },
     { id: 'trade', label: 'Trade', shortLabel: 'Trade' },
     { id: 'standings', label: 'Standings', shortLabel: 'Standings' },
+    { id: 'live-scores', label: 'Live Scores', shortLabel: 'Scores' },
 ];
 
 const tabButtonClass = (isActive) => (

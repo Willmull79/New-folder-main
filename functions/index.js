@@ -18,6 +18,7 @@ admin.initializeApp();
 const { syncSleeperPlayersScheduled } = require('./sleeperPlayerSync.js');
 const { runSleeperPlayerSync } = require('./sleeperSyncRunner.js');
 const { runProjectionScrape } = require('./projectionScrapeRunner.js');
+const { finalizeAllLeagueStandings } = require('./scoringEngine.js');
 exports.syncSleeperPlayersScheduled = syncSleeperPlayersScheduled;
 
 // CORS configuration
@@ -2636,4 +2637,46 @@ exports.scrapeProjectionsScheduled = functions
                 failedAt: new Date().toISOString(),
             };
         }
+    });
+
+/**
+ * Finalize official weekly standings every Tuesday at 7:00 AM ET
+ * (after the prior week's games are complete).
+ * Live Scores remain mid-week; Standings only use these finalized values.
+ */
+exports.finalizeWeeklyStandingsScheduled = functions
+    .runWith({ timeoutSeconds: 540, memory: '1GB' })
+    .pubsub.schedule('0 7 * * 2')
+    .timeZone('America/New_York')
+    .onRun(async () => {
+        console.log('Starting Tuesday weekly standings finalization');
+        try {
+            const summary = await finalizeAllLeagueStandings(admin.firestore());
+            console.log('Weekly standings finalization completed', summary);
+            return summary;
+        } catch (error) {
+            console.error('Weekly standings finalization failed:', error);
+            throw error;
+        }
+    });
+
+/**
+ * Manual HTTP trigger to finalize standings (commissioner/admin use).
+ * Optional query: ?week=5
+ */
+exports.finalizeWeeklyStandings = functions
+    .runWith({ timeoutSeconds: 540, memory: '1GB' })
+    .https.onRequest(async (req, res) => {
+        return cors(req, res, async () => {
+            try {
+                const week = req.query.week || req.body?.week || null;
+                const summary = await finalizeAllLeagueStandings(admin.firestore(), {
+                    week: week != null ? Number(week) : null,
+                });
+                return res.json({ success: true, ...summary });
+            } catch (error) {
+                console.error('finalizeWeeklyStandings error:', error);
+                return res.status(500).json({ success: false, error: error.message });
+            }
+        });
     });
