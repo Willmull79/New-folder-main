@@ -7,6 +7,12 @@ import {
     startDraftLocal,
     stopDraftLocal,
 } from './localDraftEngine.js';
+import {
+    nominatePlayerLocal,
+    placeAuctionBidLocal,
+    resolveExpiredAuctionLocal,
+    completeAuctionLocal,
+} from './localAuctionEngine.js';
 import { generatePickOrder, shuffleArray } from './draftOrderUtils.js';
 import { isOnActiveNflRoster } from './helpers.js';
 
@@ -285,6 +291,26 @@ class DraftService {
 
     async autoPickPlayer(leagueId, teamId) {
         return { success: true, message: 'Auto-pick handled locally in DraftCenter' };
+    }
+
+    async nominatePlayer(leagueId, teamId, playerId) {
+        if (!this.db) throw new Error('Firestore is not ready');
+        return nominatePlayerLocal(this.db, leagueId, teamId, playerId, this.playerPool);
+    }
+
+    async placeAuctionBid(leagueId, teamId, amount) {
+        if (!this.db) throw new Error('Firestore is not ready');
+        return placeAuctionBidLocal(this.db, leagueId, teamId, amount);
+    }
+
+    async resolveExpiredAuction(leagueId) {
+        if (!this.db) throw new Error('Firestore is not ready');
+        return resolveExpiredAuctionLocal(this.db, leagueId);
+    }
+
+    async completeAuction(leagueId) {
+        if (!this.db) throw new Error('Firestore is not ready');
+        return completeAuctionLocal(this.db, leagueId);
     }
 
     async getDraftAnalysis(leagueId, teamId) {

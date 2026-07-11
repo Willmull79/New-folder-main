@@ -72,28 +72,37 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
     }, [db, currentLeague]);
 
     useEffect(() => {
-        if (currentLeague) {
-            setLeagueName(currentLeague.name || '');
-            setNumTeams(currentLeague.settings?.numTeams || 12);
-            setNumWeeks(currentLeague.settings?.numWeeks || 14);
-            setPlayoffWeeks(currentLeague.settings?.playoffWeeks || 3);
-            setTeamSalary(currentLeague.settings?.teamSalary || 1000);
-            setUseTeamSalaryCap(isTeamSalaryCapEnabled(currentLeague.settings));
-            setUsePlayerSalaries(isPlayerSalaryEnabled(currentLeague.settings));
-            setPlayersToDrop(currentLeague.settings?.playersToDrop || 5);
-            setSalaryRaisePercentage(currentLeague.settings?.salaryRaisePercentage || 10);
-            setMinPlayerSalary(currentLeague.settings?.minPlayerSalary || 0.5);
-            setScoringRules(currentLeague.settings?.scoringRules || STANDARD_SCORING_RULES);
-            setRosterLimits(currentLeague.settings?.rosterLimits || INITIAL_ROSTER_LIMITS);
-            const split = splitStartingSlots(currentLeague.settings?.startingSlots);
-            setDefenseFormat(currentLeague.settings?.defenseFormat || inferDefenseFormat(currentLeague.settings?.startingSlots));
-            setOffenseSlots(split.offense);
-            setIdpSlots(split.idp);
-            setDstSlots(split.dst);
-            setDivisions(currentLeague.settings?.divisions || [{ name: 'Division 1' }, { name: 'Division 2' }]);
-            setDivisionsEnabled(currentLeague.settings?.divisions?.length > 0);
-        }
-    }, [currentLeague]);
+        if (!currentLeague) return;
+
+        // Only hydrate the form when switching leagues. Re-syncing on every
+        // league snapshot (draft timer, picks, etc.) wipes in-progress edits
+        // and makes Save appear to do nothing.
+        setLeagueName(currentLeague.name || '');
+        setNumTeams(currentLeague.settings?.numTeams || 12);
+        setNumWeeks(currentLeague.settings?.numWeeks || 14);
+        setPlayoffWeeks(currentLeague.settings?.playoffWeeks || 3);
+        setTeamSalary(currentLeague.settings?.teamSalary || 1000);
+        setUseTeamSalaryCap(isTeamSalaryCapEnabled(currentLeague.settings));
+        setUsePlayerSalaries(isPlayerSalaryEnabled(currentLeague.settings));
+        setPlayersToDrop(currentLeague.settings?.playersToDrop || 5);
+        setSalaryRaisePercentage(currentLeague.settings?.salaryRaisePercentage || 10);
+        setMinPlayerSalary(currentLeague.settings?.minPlayerSalary || 0.5);
+        setScoringRules(currentLeague.settings?.scoringRules || STANDARD_SCORING_RULES);
+        setRosterLimits(currentLeague.settings?.rosterLimits || INITIAL_ROSTER_LIMITS);
+        const split = splitStartingSlots(currentLeague.settings?.startingSlots);
+        setDefenseFormat(currentLeague.settings?.defenseFormat || inferDefenseFormat(currentLeague.settings?.startingSlots));
+        setOffenseSlots(split.offense);
+        setIdpSlots(split.idp);
+        setDstSlots(split.dst);
+        const rawDivisions = currentLeague.settings?.divisions || [];
+        const normalizedDivisions = rawDivisions.length
+            ? rawDivisions.map((division) => (
+                typeof division === 'string' ? { name: division } : { name: division?.name || '' }
+            ))
+            : [{ name: 'Division 1' }, { name: 'Division 2' }];
+        setDivisions(normalizedDivisions);
+        setDivisionsEnabled(rawDivisions.length > 0);
+    }, [currentLeague?.id]);
 
     const handleDeleteTeam = async () => {
         if (!db || !selectedTeamToDelete || !currentLeague?.id) return;
@@ -211,6 +220,19 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
         }
     };
 
+    const toFiniteNumber = (value, fallback = 0) => {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    };
+
+    const cleanNumberMap = (map = {}, fallback = 0) => (
+        Object.fromEntries(
+            Object.entries(map)
+                .filter(([key]) => Boolean(key))
+                .map(([key, val]) => [key, toFiniteNumber(val, fallback)]),
+        )
+    );
+
     const handleSaveLeagueSettings = async () => {
         if (!db || !currentLeague?.id) {
             showMessage("Cannot save settings - missing league data.", "error");
@@ -220,46 +242,83 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
         setIsLoading(true);
         try {
             const leagueRef = db.doc(`leagues/${currentLeague.id}`);
-            const finalDivisions = divisionsEnabled ? divisions.map(d => d.name.trim()).filter(Boolean) : [];
-            
-            const startingSlots = buildStartingSlots({
+            const finalDivisions = divisionsEnabled
+                ? divisions.map((d) => (d?.name || '').trim()).filter(Boolean)
+                : [];
+
+            const startingSlots = cleanNumberMap(buildStartingSlots({
                 offenseSlots,
                 defenseFormat,
                 idpSlots,
                 dstSlots,
-            });
+            }));
 
-            const updateData = {
-                name: leagueName.trim(),
-                settings: {
-                    numTeams: Number(numTeams),
-                    numWeeks: Number(numWeeks),
-                    playoffWeeks: Number(playoffWeeks),
-                    useTeamSalaryCap,
-                    usePlayerSalaries,
-                    teamSalary: useTeamSalaryCap ? Number(teamSalary) : null,
-                    playersToDrop: Number(playersToDrop),
-                    salaryRaisePercentage: usePlayerSalaries ? Number(salaryRaisePercentage) : null,
-                    minPlayerSalary: usePlayerSalaries ? Number(minPlayerSalary) : null,
-                    scoringRules: scoringRules,
-                    rosterLimits: rosterLimits,
-                    defenseFormat: defenseFormat,
-                    startingSlots: startingSlots,
-                    divisions: finalDivisions,
-                }
+            const existingSettings = currentLeague.settings || {};
+
+            // Field-path updates avoid rewriting unrelated/corrupt nested values
+            // and preserve draftType / other settings keys not edited here.
+            const updates = {
+                name: (leagueName || '').trim() || currentLeague.name || 'League',
+                'settings.numTeams': toFiniteNumber(numTeams, 12),
+                'settings.numWeeks': toFiniteNumber(numWeeks, 14),
+                'settings.playoffWeeks': toFiniteNumber(playoffWeeks, 3),
+                'settings.useTeamSalaryCap': Boolean(useTeamSalaryCap),
+                'settings.usePlayerSalaries': Boolean(usePlayerSalaries),
+                'settings.teamSalary': useTeamSalaryCap ? toFiniteNumber(teamSalary, 1000) : null,
+                'settings.playersToDrop': toFiniteNumber(playersToDrop, 5),
+                'settings.salaryRaisePercentage': usePlayerSalaries
+                    ? toFiniteNumber(salaryRaisePercentage, 10)
+                    : null,
+                'settings.minPlayerSalary': usePlayerSalaries
+                    ? toFiniteNumber(minPlayerSalary, 0.5)
+                    : null,
+                'settings.scoringRules': cleanNumberMap(scoringRules),
+                'settings.rosterLimits': cleanNumberMap(rosterLimits),
+                'settings.defenseFormat': defenseFormat || existingSettings.defenseFormat || 'idp',
+                'settings.startingSlots': startingSlots,
+                'settings.divisions': finalDivisions,
             };
 
-            await leagueRef.update(updateData);
+            if (existingSettings.draftType) {
+                updates['settings.draftType'] = existingSettings.draftType;
+            }
+
+            await leagueRef.update(updates);
+
+            const mergedSettings = {
+                ...existingSettings,
+                numTeams: updates['settings.numTeams'],
+                numWeeks: updates['settings.numWeeks'],
+                playoffWeeks: updates['settings.playoffWeeks'],
+                useTeamSalaryCap: updates['settings.useTeamSalaryCap'],
+                usePlayerSalaries: updates['settings.usePlayerSalaries'],
+                teamSalary: updates['settings.teamSalary'],
+                playersToDrop: updates['settings.playersToDrop'],
+                salaryRaisePercentage: updates['settings.salaryRaisePercentage'],
+                minPlayerSalary: updates['settings.minPlayerSalary'],
+                scoringRules: updates['settings.scoringRules'],
+                rosterLimits: updates['settings.rosterLimits'],
+                defenseFormat: updates['settings.defenseFormat'],
+                startingSlots: updates['settings.startingSlots'],
+                divisions: updates['settings.divisions'],
+            };
 
             showMessage("League settings updated successfully!", "success");
-            
-            // Call the callback to refresh league data in parent component
-            if (onLeagueUpdate) {
-                onLeagueUpdate();
+
+            try {
+                onLeagueUpdate?.({
+                    ...currentLeague,
+                    id: currentLeague.id,
+                    name: updates.name,
+                    settings: mergedSettings,
+                });
+            } catch (callbackError) {
+                console.warn('League settings saved, but local refresh failed:', callbackError);
             }
         } catch (error) {
             console.error("Error updating league settings:", error);
-            showMessage("Failed to update league settings.", "error");
+            const detail = error?.message || error?.code || 'Unknown error';
+            showMessage(`Failed to update league settings: ${detail}`, "error");
         } finally {
             setIsLoading(false);
         }

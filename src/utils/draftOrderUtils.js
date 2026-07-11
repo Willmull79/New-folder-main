@@ -36,6 +36,7 @@ export function toDateTimeLocalValue(value) {
 export function draftTypeToFormat(draftType) {
     if (draftType === 'snake') return 'snake';
     if (draftType === 'standard') return 'standard';
+    if (draftType === 'auction') return 'auction';
     return 'standard';
 }
 

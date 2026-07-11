@@ -83,24 +83,32 @@ export const DraftSettingsPanel = ({
         const nextStatus = overrides.status
             ?? (roundOneOrder.length ? 'order_set' : (draftDateTime ? 'scheduled' : 'pending'));
 
+        const draftPayload = {
+            ...(currentLeague.draft || {}),
+            type: draftType,
+            status: nextStatus,
+            scheduledDateTime: (overrides.scheduledDateTime ?? draftDateTime) || null,
+            orderType: overrides.orderType ?? draftOrderType,
+            roundOneOrder,
+            settings: {
+                ...(currentLeague.draft?.settings || {}),
+                draftFormat,
+                rounds: Number(draftRounds),
+                pickTimeLimit,
+                orderType: overrides.orderType ?? draftOrderType,
+            },
+        };
+
+        if (draftType === 'auction') {
+            draftPayload.nominationOrder = roundOneOrder;
+            draftPayload.draftOrder = roundOneOrder;
+        } else {
+            draftPayload.draftOrder = generatePickOrder(roundOneOrder, draftFormat, draftRounds);
+        }
+
         await db.doc(`leagues/${currentLeague.id}`).update({
             'settings.draftType': draftType,
-            draft: {
-                ...(currentLeague.draft || {}),
-                type: draftType,
-                status: nextStatus,
-                scheduledDateTime: (overrides.scheduledDateTime ?? draftDateTime) || null,
-                orderType: overrides.orderType ?? draftOrderType,
-                roundOneOrder,
-                draftOrder: generatePickOrder(roundOneOrder, draftFormat, draftRounds),
-                settings: {
-                    ...(currentLeague.draft?.settings || {}),
-                    draftFormat,
-                    rounds: Number(draftRounds),
-                    pickTimeLimit,
-                    orderType: overrides.orderType ?? draftOrderType,
-                },
-            },
+            draft: draftPayload,
         });
     };
 

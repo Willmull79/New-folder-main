@@ -261,7 +261,18 @@ const App = () => {
                                     )}
                                 </div>
                             )}
-                            {activeTab === 'commissioner' && currentLeague && isCommissioner && <CommissionerTools currentLeague={currentLeague} currentTeam={currentTeam} showMessage={showMessage} onLeagueUpdate={() => {}} />}
+                            {activeTab === 'commissioner' && currentLeague && isCommissioner && (
+                                <CommissionerTools
+                                    currentLeague={currentLeague}
+                                    currentTeam={currentTeam}
+                                    showMessage={showMessage}
+                                    onLeagueUpdate={(updatedLeague) => {
+                                        if (updatedLeague?.id) {
+                                            setCurrentLeague(updatedLeague);
+                                        }
+                                    }}
+                                />
+                            )}
                         </Suspense>
                     </>
                 )}

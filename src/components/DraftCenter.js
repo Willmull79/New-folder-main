@@ -7,12 +7,7 @@ import { playTurnNotification } from '../utils/turnNotificationSound.js';
 import { ConfirmationModal } from './ConfirmationModal.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
 import {
-    PICK_TIME_OPTIONS,
-    DRAFT_FORMAT_OPTIONS,
     MAX_ROUNDS,
-    MIN_ROUNDS,
-    generatePickOrder,
-    formatPickTimeLabel
 } from '../utils/draftOrderUtils.js';
 import { isOnActiveNflRoster } from '../utils/helpers.js';
 
@@ -49,28 +44,33 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
     const [draftScheduledTime, setDraftScheduledTime] = useState(null);
     const [isOnClock, setIsOnClock] = useState(false);
     const [draftStatus, setDraftStatus] = useState('pending');
-    
-    // Draft Configuration State (Commissioner Only)
-    const [draftDateTime, setDraftDateTime] = useState('');
-    const [draftOrderType, setDraftOrderType] = useState('random');
-    const [manualDraftOrder, setManualDraftOrder] = useState([]);
-    const [showDraftConfig, setShowDraftConfig] = useState(false);
-    const [draftFormat, setDraftFormat] = useState('standard');
-    const [draftRounds, setDraftRounds] = useState(MAX_ROUNDS);
-    const [pickTimeLimit, setPickTimeLimit] = useState(60);
-    const [roundOneOrder, setRoundOneOrder] = useState([]);
     const [showStopModal, setShowStopModal] = useState(false);
-    const [showResetModal, setShowResetModal] = useState(false);
     const [isDraftActionLoading, setIsDraftActionLoading] = useState(false);
     
     const timerRef = useRef(null);
     const countdownRef = useRef(null);
     const draftTimerIntervalRef = useRef(null);
     const prevIsMyTurnRef = useRef(false);
+    const autoPickInFlightRef = useRef(false);
+    const auctionResolveInFlightRef = useRef(false);
     const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
 
     const isCommissioner = currentLeague?.commissionerId === userId;
-    const isAuctionDraft = currentLeague?.settings?.draftType === 'auction';
+    const isAuctionDraft = (
+        currentLeague?.settings?.draftType === 'auction'
+        || draftData?.type === 'auction'
+    );
+    const auctionLive = draftData?.auctionLive || null;
+    const nominationOrder = draftData?.nominationOrder
+        || draftData?.roundOneOrder
+        || draftOrder
+        || [];
+    const nominatorTeamId = auctionLive?.nominatorTeamId
+        || nominationOrder[draftData?.currentNominatorIndex ?? 0]
+        || null;
+    const isNominator = Boolean(nominatorTeamId && nominatorTeamId === currentTeamId);
+    const canNominate = isAuctionDraft && draftStatus === 'live' && isNominator && !auctionLive?.isActive;
+    const canBid = isAuctionDraft && draftStatus === 'live' && Boolean(auctionLive?.isActive && auctionLive?.currentPlayer);
 
     useEffect(() => {
         if (db) {
@@ -127,9 +127,20 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                 setAvailablePlayers(
                     (data.draft?.availablePlayers || []).filter(isOnActiveNflRoster)
                 );
-                setDraftOrder(data.draft?.draftOrder || []);
+                const order = data.draft?.type === 'auction'
+                    ? (data.draft?.nominationOrder || data.draft?.roundOneOrder || [])
+                    : (data.draft?.draftOrder || []);
+                setDraftOrder(order);
                 setCurrentPick(data.draft?.currentPick || null);
-                setIsAuctionActive(data.draft?.status === 'active');
+
+                const liveAuction = data.draft?.auctionLive || null;
+                setAuctionPlayer(liveAuction?.currentPlayer || null);
+                setCurrentBid(
+                    liveAuction?.isActive
+                        ? { amount: liveAuction.currentBid, teamId: liveAuction.currentBidder }
+                        : null
+                );
+                setIsAuctionActive(Boolean(liveAuction?.isActive));
                 setDraftScheduledTime(data.draft?.scheduledDateTime);
                 setDraftStatus(data.draft?.status || 'pending');
                 setIsLoading(false);
@@ -144,13 +155,38 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
 
     // Turn tracking and local countdown from Firestore draft state
     useEffect(() => {
-        if (draftStatus !== 'live' || !draftOrder.length) {
+        if (draftStatus !== 'live') {
             setIsMyTurn(false);
             setIsOnClock(false);
             setPicksUntilMyTurn(0);
             if (draftStatus !== 'paused') {
                 setLocalTimeRemaining(0);
             }
+            return;
+        }
+
+        if (isAuctionDraft) {
+            const onClock = auctionLive?.isActive
+                ? true // all teams can bid while auction is active
+                : isNominator;
+            setIsOnClock(isNominator && !auctionLive?.isActive);
+            setIsMyTurn(onClock);
+            setPicksUntilMyTurn(0);
+            setDraftTimerState({
+                status: draftStatus,
+                currentPick: draftData?.currentNominatorIndex ?? 0,
+                currentTeamId: nominatorTeamId,
+                draftOrder: nominationOrder,
+                timeRemaining: localTimeRemaining,
+                mode: 'auction',
+            });
+            return;
+        }
+
+        if (!draftOrder.length) {
+            setIsMyTurn(false);
+            setIsOnClock(false);
+            setPicksUntilMyTurn(0);
             return;
         }
 
@@ -177,7 +213,19 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             draftOrder,
             timeRemaining: localTimeRemaining,
         });
-    }, [draftStatus, draftOrder, draftData?.currentPick, currentTeamId, localTimeRemaining]);
+    }, [
+        draftStatus,
+        draftOrder,
+        draftData?.currentPick,
+        draftData?.currentNominatorIndex,
+        currentTeamId,
+        localTimeRemaining,
+        isAuctionDraft,
+        auctionLive?.isActive,
+        isNominator,
+        nominatorTeamId,
+        nominationOrder,
+    ]);
 
     useEffect(() => {
         if (draftStatus === 'paused') {
@@ -185,7 +233,17 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             return undefined;
         }
 
-        if (draftStatus !== 'live' || !draftData?.pickDeadline) {
+        if (draftStatus !== 'live') {
+            setLocalTimeRemaining(0);
+            return undefined;
+        }
+
+        // Auction uses bidDeadline; pick drafts use pickDeadline
+        const deadline = isAuctionDraft
+            ? auctionLive?.bidDeadline
+            : draftData?.pickDeadline;
+
+        if (!deadline) {
             setLocalTimeRemaining(0);
             return undefined;
         }
@@ -193,7 +251,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         const tick = () => {
             const remaining = Math.max(
                 0,
-                Math.floor((new Date(draftData.pickDeadline).getTime() - Date.now()) / 1000)
+                Math.floor((new Date(deadline).getTime() - Date.now()) / 1000)
             );
             setLocalTimeRemaining(remaining);
         };
@@ -201,7 +259,15 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         tick();
         const intervalId = setInterval(tick, 1000);
         return () => clearInterval(intervalId);
-    }, [draftStatus, draftData?.pickDeadline, draftData?.currentPick, draftData?.pausedTimeRemaining]);
+    }, [
+        draftStatus,
+        draftData?.pickDeadline,
+        draftData?.currentPick,
+        draftData?.pausedTimeRemaining,
+        isAuctionDraft,
+        auctionLive?.bidDeadline,
+        auctionLive?.currentPlayer?.id,
+    ]);
 
     useEffect(() => {
         if (isMyTurn && !prevIsMyTurnRef.current && draftStatus === 'live') {
@@ -222,33 +288,6 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             }
         }
     }, [draftScheduledTime, draftStatus]);
-
-    // Initialize draft configuration state
-    useEffect(() => {
-        if (currentLeague) {
-            const settings = currentLeague.draft?.settings || {};
-            const savedRoundOneOrder = currentLeague.draft?.roundOneOrder
-                || currentLeague.draft?.customOrder
-                || currentLeague.draft?.manualOrder
-                || [];
-
-            setDraftDateTime(currentLeague.draft?.scheduledDateTime || '');
-            setDraftOrderType(settings.orderType || currentLeague.draft?.orderType || 'random');
-            setManualDraftOrder(savedRoundOneOrder);
-            setRoundOneOrder(savedRoundOneOrder);
-            setDraftFormat(settings.draftFormat || currentLeague.settings?.draftType || 'standard');
-            setDraftRounds(settings.rounds ?? MAX_ROUNDS);
-            setPickTimeLimit(settings.pickTimeLimit ?? settings.timeLimit ?? 60);
-            setDraftStatus(currentLeague.draft?.status || 'pending');
-        }
-    }, [currentLeague]);
-
-    // Initialize manual draft order with current teams if empty
-    useEffect(() => {
-        if (draftOrderType === 'manual' && manualDraftOrder.length === 0 && teamsData.length > 0) {
-            setManualDraftOrder(teamsData.map(team => team.id));
-        }
-    }, [draftOrderType, manualDraftOrder.length, teamsData]);
 
     // Load all NFL players and teams data
     useEffect(() => {
@@ -358,23 +397,122 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         }
     };
 
-    const handleTimeUp = async () => {
-        if (timeRemaining <= 0 && isMyTurn) {
-            await autoPickPlayer();
+    const autoPickPlayer = async () => {
+        if (isAuctionDraft || autoPickInFlightRef.current) return;
+
+        const pool = draftablePlayers.length ? draftablePlayers : draftData?.availablePlayers || [];
+        if (!pool.length && !draftBoard.some(Boolean)) return;
+
+        const availableIds = new Set(pool.map((player) => String(player.id)));
+
+        // Prefer the next still-available player on this team's draft board (slot order)
+        let boardSlotIndex = -1;
+        let selectedPlayer = null;
+        for (let i = 0; i < draftBoard.length; i += 1) {
+            const boardPlayer = draftBoard[i];
+            if (!boardPlayer?.id) continue;
+            if (!availableIds.has(String(boardPlayer.id))) continue;
+            selectedPlayer = pool.find((p) => String(p.id) === String(boardPlayer.id)) || boardPlayer;
+            boardSlotIndex = i;
+            break;
+        }
+
+        let fromBoard = boardSlotIndex >= 0;
+
+        // Fall back to best available from the draft pool (lowest rank number)
+        if (!selectedPlayer) {
+            fromBoard = false;
+            selectedPlayer = [...pool].sort((a, b) => (a.rank || 9999) - (b.rank || 9999))[0];
+        }
+
+        if (!selectedPlayer?.id) return;
+
+        autoPickInFlightRef.current = true;
+        try {
+            await draftService.makeDraftPick(currentLeague.id, currentTeamId, selectedPlayer.id);
+
+            if (fromBoard && boardSlotIndex >= 0) {
+                setDraftBoard((prev) => {
+                    const next = [...prev];
+                    next[boardSlotIndex] = null;
+                    return next;
+                });
+            }
+
+            showMessage(
+                fromBoard
+                    ? `Clock expired — auto-drafted ${selectedPlayer.name} from your draft board.`
+                    : `Clock expired — auto-drafted ${selectedPlayer.name} (rank ${selectedPlayer.rank}).`,
+                'success',
+            );
+            setIsMyTurn(false);
+            setIsOnClock(false);
+        } catch (error) {
+            console.error('Auto-pick failed:', error);
+        } finally {
+            autoPickInFlightRef.current = false;
         }
     };
 
-    const autoPickPlayer = async () => {
-        const pool = draftablePlayers.length ? draftablePlayers : draftData?.availablePlayers || [];
-        if (!pool.length) return;
+    // Standard / snake: auto-pick best available when the clock hits 0
+    useEffect(() => {
+        if (isAuctionDraft) return;
+        if (draftStatus !== 'live' || !isMyTurn) return;
+        if (!draftData?.pickDeadline) return;
+        if (localTimeRemaining > 0) return;
+        if (autoPickInFlightRef.current) return;
 
-        const bestPlayer = [...pool].sort((a, b) => (a.rank || 999) - (b.rank || 999))[0];
-        await makePick(bestPlayer);
-    };
+        autoPickPlayer();
+    }, [
+        localTimeRemaining,
+        isMyTurn,
+        draftStatus,
+        isAuctionDraft,
+        draftData?.pickDeadline,
+        draftData?.currentPick,
+    ]);
+
+    // Auction: award player when bid timer expires
+    useEffect(() => {
+        if (!isAuctionDraft || draftStatus !== 'live') return;
+        if (!auctionLive?.isActive || !auctionLive?.bidDeadline) return;
+        if (localTimeRemaining > 0) return;
+        if (auctionResolveInFlightRef.current || !currentLeague?.id) return;
+
+        auctionResolveInFlightRef.current = true;
+        draftService.resolveExpiredAuction(currentLeague.id)
+            .then((result) => {
+                if (result?.resolved) {
+                    showMessage(
+                        `${result.player?.name} awarded for $${result.winningBid}.`,
+                        'success',
+                    );
+                }
+            })
+            .catch((error) => {
+                console.error('Auction resolve failed:', error);
+            })
+            .finally(() => {
+                auctionResolveInFlightRef.current = false;
+            });
+    }, [
+        isAuctionDraft,
+        draftStatus,
+        auctionLive?.isActive,
+        auctionLive?.bidDeadline,
+        auctionLive?.currentPlayer?.id,
+        localTimeRemaining,
+        currentLeague?.id,
+    ]);
 
     const makePick = async (player) => {
         if (!player || !player.id) {
             showMessage("Invalid player selected", "error");
+            return;
+        }
+
+        if (isAuctionDraft) {
+            showMessage("This is an auction draft — nominate or bid instead of drafting.", "error");
             return;
         }
 
@@ -389,13 +527,6 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         }
 
         try {
-            console.log('Making draft pick:', {
-                leagueId: currentLeague.id,
-                teamId: currentTeamId,
-                playerId: player.id,
-                playerName: player.name
-            });
-
             const result = await draftService.makeDraftPick(
                 currentLeague.id, 
                 currentTeamId, 
@@ -405,7 +536,6 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             console.log('Draft pick successful:', result);
             showMessage(`Drafted ${player.name}!`, "success");
             
-            // Reset turn state immediately
             setIsMyTurn(false);
             setIsOnClock(false);
         } catch (error) {
@@ -415,54 +545,37 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
     };
 
     const handleAuctionBid = async (amount) => {
-        try {
-            const response = await fetch(`https://us-central1-dynasty-420.cloudfunctions.net/validateAuctionAction`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    leagueId: currentLeague.id,
-                    teamId: currentTeamId,
-                    action: 'bid',
-                    amount: amount,
-                    playerId: auctionPlayer.id
-                })
-            });
+        if (!auctionPlayer) {
+            showMessage('No player is up for auction.', 'error');
+            return;
+        }
 
-            if (response.ok) {
-                showMessage(`Bid placed: $${amount}`, "success");
-                setBidAmount(1);
-            } else {
-                const errorData = await response.json();
-                showMessage(errorData.error || "Error placing bid", "error");
-            }
+        try {
+            const result = await draftService.placeAuctionBid(
+                currentLeague.id,
+                currentTeamId,
+                amount,
+            );
+            showMessage(`Bid placed: $${result.currentBid}`, 'success');
+            setBidAmount((result.currentBid || amount) + 1);
         } catch (error) {
-            console.error("Error placing bid:", error);
-            showMessage("Error placing bid", "error");
+            console.error('Error placing bid:', error);
+            showMessage(error.message || 'Error placing bid', 'error');
         }
     };
 
     const handleNominatePlayer = async (player) => {
         try {
-            const response = await fetch(`https://us-central1-dynasty-420.cloudfunctions.net/validateAuctionAction`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    leagueId: currentLeague.id,
-                    teamId: currentTeamId,
-                    action: 'nominate',
-                    playerId: player.id
-                })
-            });
-
-            if (response.ok) {
-            showMessage(`Nominated ${player.name} for auction`, "success");
-            } else {
-                const errorData = await response.json();
-                showMessage(errorData.error || "Error nominating player", "error");
-            }
+            const result = await draftService.nominatePlayer(
+                currentLeague.id,
+                currentTeamId,
+                player.id,
+            );
+            setBidAmount((result.currentBid || 1) + 1);
+            showMessage(`Nominated ${player.name} for auction at $${result.currentBid}`, 'success');
         } catch (error) {
-            console.error("Error nominating player:", error);
-            showMessage("Error nominating player", "error");
+            console.error('Error nominating player:', error);
+            showMessage(error.message || 'Error nominating player', 'error');
         }
     };
 
@@ -486,22 +599,6 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         setDraftBoard(newDraftBoard);
     };
 
-    const handleUpdateNFLData = async () => {
-        try {
-            const players = await nflPlayerService.getAllPlayers({ forceRefresh: true });
-            const sortedPlayers = [...players].sort((a, b) => {
-                if (a.rank && b.rank) return a.rank - b.rank;
-                return a.name.localeCompare(b.name);
-            });
-            setAllNFLPlayers(sortedPlayers);
-            setFilteredPlayers(sortedPlayers);
-            showMessage(`Player data updated from Sleeper (${sortedPlayers.length} QB/RB/WR/TE).`, 'success');
-        } catch (error) {
-            console.error('Error updating NFL data:', error);
-            showMessage('Error updating NFL data', 'error');
-        }
-    };
-
     const handleStartDraft = async () => {
         if (!currentLeague?.id) {
             showMessage('No league selected', 'error');
@@ -516,7 +613,12 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             if (result?.timeRemaining != null) {
                 setLocalTimeRemaining(result.timeRemaining);
             }
-            showMessage('Draft started!', 'success');
+            showMessage(
+                result?.type === 'auction' || isAuctionDraft
+                    ? 'Auction started! First team can nominate a player.'
+                    : 'Draft started!',
+                'success',
+            );
         } catch (error) {
             console.error('Error starting draft:', error);
             showMessage(error.message || 'Error starting draft', 'error');
@@ -577,103 +679,16 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         }
     };
 
-    const handleResetDraft = async () => {
-        if (!currentLeague?.id) return;
-
-        setIsDraftActionLoading(true);
-        try {
-            draftService.setPlayerPool(playerSource);
-            const result = await draftService.resetDraft(currentLeague.id);
-            setDraftStatus(result?.status || 'order_set');
-            setShowResetModal(false);
-            showMessage('Draft reset successfully', 'success');
-        } catch (error) {
-            console.error('Error resetting draft:', error);
-            showMessage(error.message || 'Error resetting draft', 'error');
-        } finally {
-            setIsDraftActionLoading(false);
-        }
-    };
-
-    // Draft Configuration Functions (Commissioner Only)
-    const handleSetDraftDateTime = async () => {
-        if (!currentLeague?.id) return;
-        
-        try {
-            await draftService.setDraftDateTime(currentLeague.id, draftDateTime);
-            showMessage("Draft date and time set successfully!", "success");
-        } catch (error) {
-            console.error("Error setting draft date/time:", error);
-            showMessage(error.message || "Failed to set draft date/time.", "error");
-        }
-    };
-
-    const handleSaveDraftSettings = async () => {
-        if (!currentLeague?.id) return;
-
-        try {
-            await draftService.configureDraft(currentLeague.id, {
-                draftFormat,
-                rounds: draftRounds,
-                pickTimeLimit,
-                orderType: draftOrderType,
-                roundOneOrder: manualDraftOrder.length ? manualDraftOrder : roundOneOrder
-            });
-            showMessage("Draft settings saved successfully!", "success");
-        } catch (error) {
-            console.error("Error saving draft settings:", error);
-            showMessage(error.message || "Failed to save draft settings.", "error");
-        }
-    };
-
-    const handleRandomizeDraftOrder = async () => {
-        if (!currentLeague?.id || !teamsData.length) return;
-        
-        try {
-            const result = await draftService.randomizeDraftOrder(currentLeague.id, {
-                draftFormat,
-                rounds: draftRounds
-            });
-
-            const randomizedOrder = result.roundOneOrder || [];
-            setManualDraftOrder(randomizedOrder);
-            setRoundOneOrder(randomizedOrder);
-            setDraftOrder(result.draftOrder || generatePickOrder(randomizedOrder, draftFormat, draftRounds));
-            setDraftOrderType('random');
-            showMessage("Draft lineup randomized! Order is locked until you randomize again.", "success");
-        } catch (error) {
-            console.error("Error randomizing draft order:", error);
-            showMessage(error.message || "Failed to randomize draft order.", "error");
-        }
-    };
-
-    const handleSetManualDraftOrder = async () => {
-        if (!currentLeague?.id || !teamsData.length) return;
-        
-        try {
-            const result = await draftService.setDraftOrder(currentLeague.id, manualDraftOrder);
-            setRoundOneOrder(manualDraftOrder);
-            setDraftOrder(result.draftOrder || generatePickOrder(manualDraftOrder, draftFormat, draftRounds));
-            setDraftOrderType('manual');
-            showMessage("Manual draft order set successfully!", "success");
-        } catch (error) {
-            console.error("Error setting manual draft order:", error);
-            showMessage(error.message || "Failed to set manual draft order.", "error");
-        }
-    };
-
-    const handleMoveTeamInDraftOrder = (fromIndex, toIndex) => {
-        const newOrder = [...manualDraftOrder];
-        const [movedTeam] = newOrder.splice(fromIndex, 1);
-        newOrder.splice(toIndex, 0, movedTeam);
-        setManualDraftOrder(newOrder);
-    };
-
     const canStartDraft = ['pending', 'order_set', 'scheduled', 'completed'].includes(draftStatus);
     const canPauseDraft = draftStatus === 'live';
     const canResumeDraft = draftStatus === 'paused';
     const canStopDraft = ['live', 'paused'].includes(draftStatus);
-    const canResetDraft = draftStatus !== 'pending' || draftData?.picks?.length || draftData?.draftedPlayers?.length;
+    const hasDraftOrder = Boolean(
+        draftOrder?.length
+        || draftData?.nominationOrder?.length
+        || draftData?.roundOneOrder?.length
+        || teamsData.length
+    );
 
     if (isLoading) {
         return (
@@ -714,34 +729,26 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                     </button>
                 </div>
 
-            {/* Commissioner Controls */}
+            {/* Commissioner Controls — start / pause / resume / stop only */}
                 <div className="mb-6 p-4 bg-emerald-900 rounded-lg">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-xl font-semibold text-purple-400">
-                            Commissioner Controls
-                            {!isCommissioner && <span className="text-sm text-red-400 ml-2">(Commissioner only)</span>}
-                        </h3>
-                        {isCommissioner && (
-                            <button
-                                onClick={() => setShowDraftConfig(!showDraftConfig)}
-                                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-md text-white font-semibold"
-                            >
-                                {showDraftConfig ? 'Hide' : 'Show'} Draft Configuration
-                            </button>
-                        )}
-                    </div>
+                    <h3 className="text-xl font-semibold text-purple-400 mb-4">
+                        Commissioner Controls
+                        {!isCommissioner && <span className="text-sm text-red-400 ml-2">(Commissioner only)</span>}
+                    </h3>
 
-                    {isCommissioner && (
-                        <div className="mb-4 p-4 rounded-lg bg-emerald-950/70 border border-emerald-700">
-                            <h4 className="text-lg font-semibold text-yellow-400 mb-2">Draft Controls</h4>
+                    {isCommissioner ? (
+                        <div className="p-4 rounded-lg bg-emerald-950/70 border border-emerald-700">
                             <p className="text-sm text-emerald-300 mb-4">
-                                Manage the live draft. Status: <span className="font-semibold text-white">{draftStatus.replace('_', ' ')}</span>
+                                Configure draft type, order, and schedule in{' '}
+                                <span className="font-semibold text-white">Commissioner Tools</span>.
+                                Status: <span className="font-semibold text-white">{String(draftStatus || 'pending').replace('_', ' ')}</span>
                             </p>
                             <div className="flex flex-wrap gap-3">
                                 {canStartDraft && (
                                     <button
+                                        type="button"
                                         onClick={handleStartDraft}
-                                        disabled={isDraftActionLoading || (!manualDraftOrder.length && !draftOrder.length && !teamsData.length)}
+                                        disabled={isDraftActionLoading || !hasDraftOrder}
                                         className="px-5 py-2.5 bg-green-600 hover:bg-green-700 rounded-md font-semibold disabled:opacity-50"
                                     >
                                         Start Draft
@@ -749,6 +756,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                 )}
                                 {canPauseDraft && (
                                     <button
+                                        type="button"
                                         onClick={handlePauseDraft}
                                         disabled={isDraftActionLoading}
                                         className="px-5 py-2.5 bg-yellow-600 hover:bg-yellow-700 rounded-md font-semibold disabled:opacity-50"
@@ -758,6 +766,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                 )}
                                 {canResumeDraft && (
                                     <button
+                                        type="button"
                                         onClick={handleResumeDraft}
                                         disabled={isDraftActionLoading}
                                         className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-md font-semibold disabled:opacity-50"
@@ -767,6 +776,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                 )}
                                 {canStopDraft && (
                                     <button
+                                        type="button"
                                         onClick={() => setShowStopModal(true)}
                                         disabled={isDraftActionLoading}
                                         className="px-5 py-2.5 bg-red-600 hover:bg-red-700 rounded-md font-semibold disabled:opacity-50"
@@ -774,240 +784,16 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                         Stop Draft
                                     </button>
                                 )}
-                                {(canResetDraft || draftStatus === 'completed' || draftStatus === 'live' || draftStatus === 'paused' || draftStatus === 'order_set') && (
-                                    <button
-                                        onClick={() => setShowResetModal(true)}
-                                        disabled={isDraftActionLoading}
-                                        className="px-5 py-2.5 bg-orange-700 hover:bg-orange-800 rounded-md font-semibold disabled:opacity-50"
-                                    >
-                                        Reset Draft
-                                    </button>
-                                )}
-                                <button
-                                    onClick={handleUpdateNFLData}
-                                    disabled={isDraftActionLoading}
-                                    className="px-5 py-2.5 bg-blue-700 hover:bg-blue-800 rounded-md font-semibold disabled:opacity-50"
-                                >
-                                    Update Player Data
-                                </button>
                             </div>
                         </div>
-                    )}
-
-                    {!isCommissioner && (
+                    ) : (
                         <p className="text-sm text-emerald-300">
                             Draft controls are available to the league commissioner only.
+                            Draft setup is in Commissioner Tools.
                         </p>
                     )}
-                        
-                    {isCommissioner && showDraftConfig && (
-                        <div className="mt-4 p-4 bg-emerald-800 rounded-lg border-2 border-emerald-600">
-                                <h4 className="text-xl font-semibold mb-4 text-orange-400">Draft Configuration</h4>
-
-                                {/* Draft Settings */}
-                                <div className="mb-6">
-                                    <h5 className="text-lg font-bold mb-3 text-emerald-200 border-b border-emerald-500 pb-2">Draft Settings</h5>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                                        <div>
-                                            <label className="block text-emerald-200 font-medium text-sm mb-1">Draft Format</label>
-                                            <select
-                                                value={draftFormat}
-                                                onChange={(e) => setDraftFormat(e.target.value)}
-                                                className="w-full p-3 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500"
-                                            >
-                                                {DRAFT_FORMAT_OPTIONS.map(option => (
-                                                    <option key={option.value} value={option.value}>{option.label}</option>
-                                                ))}
-                                            </select>
-                                            <p className="text-xs text-emerald-300 mt-1">
-                                                {draftFormat === 'snake'
-                                                    ? 'Snake reverses pick order every other round after round one.'
-                                                    : 'Standard keeps the same pick order every round.'}
-                                            </p>
-                                        </div>
-                                        <div>
-                                            <label className="block text-emerald-200 font-medium text-sm mb-1">
-                                                Rounds ({MIN_ROUNDS}-{MAX_ROUNDS})
-                                            </label>
-                                            <input
-                                                type="number"
-                                                min={MIN_ROUNDS}
-                                                max={MAX_ROUNDS}
-                                                value={draftRounds}
-                                                onChange={(e) => setDraftRounds(Number(e.target.value))}
-                                                className="w-full p-3 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-emerald-200 font-medium text-sm mb-1">Pick Timer</label>
-                                            <select
-                                                value={pickTimeLimit === null ? 'unlimited' : String(pickTimeLimit)}
-                                                onChange={(e) => setPickTimeLimit(
-                                                    e.target.value === 'unlimited' ? null : Number(e.target.value)
-                                                )}
-                                                className="w-full p-3 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500"
-                                            >
-                                                {PICK_TIME_OPTIONS.map(option => (
-                                                    <option
-                                                        key={option.label}
-                                                        value={option.value === null ? 'unlimited' : String(option.value)}
-                                                    >
-                                                        {option.label}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            <p className="text-xs text-emerald-300 mt-1">
-                                                Current: {formatPickTimeLabel(pickTimeLimit)}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={handleSaveDraftSettings}
-                                        className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-md transition-colors"
-                                    >
-                                        Save Draft Settings
-                                    </button>
-                                </div>
-                                
-                                {/* Draft Date and Time */}
-                                <div className="mb-6">
-                                    <h5 className="text-lg font-bold mb-3 text-emerald-200 border-b border-emerald-500 pb-2">Draft Date & Time</h5>
-                                    <div className="flex gap-4 items-end">
-                                        <div className="flex-1">
-                                            <label className="block text-emerald-200 font-medium text-sm mb-1">Draft Date & Time:</label>
-                                            <input
-                                                type="datetime-local"
-                                                value={draftDateTime}
-                                                onChange={(e) => setDraftDateTime(e.target.value)}
-                                                className="w-full p-3 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors"
-                                            />
-                                        </div>
-                                        <button
-                                            onClick={handleSetDraftDateTime}
-                                            disabled={!draftDateTime}
-                                            className="px-6 py-3 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md disabled:opacity-50 transition-colors"
-                                        >
-                                            Set Date/Time
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* Draft Order Management */}
-                                <div className="mb-6">
-                                    <h5 className="text-lg font-bold mb-3 text-emerald-200 border-b border-emerald-500 pb-2">Draft Order (Round 1)</h5>
-                                    <p className="text-sm text-emerald-300 mb-4">
-                                        Set round-one lineup order once. {draftFormat === 'snake' ? 'Snake draft reverses order on even rounds.' : 'Standard draft repeats this order each round.'}
-                                    </p>
-                                    
-                                    <div className="mb-4">
-                                        <div className="flex gap-4 items-center mb-4">
-                                            <label className="flex items-center space-x-3 cursor-pointer">
-                                                <input
-                                                    type="radio"
-                                                    name="draftOrderType"
-                                                    value="random"
-                                                    checked={draftOrderType === 'random'}
-                                                    onChange={(e) => setDraftOrderType(e.target.value)}
-                                                    className="form-radio h-4 w-4 bg-emerald-100 border-emerald-300 text-purple-500 focus:ring-purple-500"
-                                                />
-                                                <span className="text-emerald-200 font-medium">Randomize Round 1</span>
-                                            </label>
-                                            <label className="flex items-center space-x-3 cursor-pointer">
-                                                <input
-                                                    type="radio"
-                                                    name="draftOrderType"
-                                                    value="manual"
-                                                    checked={draftOrderType === 'manual'}
-                                                    onChange={(e) => setDraftOrderType(e.target.value)}
-                                                    className="form-radio h-4 w-4 bg-emerald-100 border-emerald-300 text-purple-500 focus:ring-purple-500"
-                                                />
-                                                <span className="text-emerald-200 font-medium">Manual Round 1</span>
-                                            </label>
-                                        </div>
-                                        
-                                        <div className="flex gap-4">
-                                            <button
-                                                onClick={handleRandomizeDraftOrder}
-                                                disabled={!teamsData.length}
-                                                className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md disabled:opacity-50 transition-colors"
-                                            >
-                                                Randomize Draft Lineup
-                                            </button>
-                                            {draftOrderType === 'manual' && (
-                                                <button
-                                                    onClick={handleSetManualDraftOrder}
-                                                    disabled={manualDraftOrder.length === 0}
-                                                    className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-md disabled:opacity-50 transition-colors"
-                                                >
-                                                    Save Manual Order
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Manual Draft Order Editor */}
-                                    {draftOrderType === 'manual' && (
-                                        <div className="bg-emerald-700 p-4 rounded-lg">
-                                            <h6 className="text-md font-semibold mb-3 text-emerald-200">Manual Draft Order</h6>
-                                            <p className="text-sm text-emerald-300 mb-4">Use the buttons to move teams up/down in the draft order:</p>
-                                            
-                                            <div className="space-y-2">
-                                                {manualDraftOrder.map((teamId, index) => {
-                                                    const team = teamsData.find(t => t.id === teamId);
-                                                    return (
-                                                        <div key={teamId} className="flex items-center gap-3 bg-emerald-800 p-3 rounded-lg">
-                                                            <span className="text-emerald-300 font-bold min-w-[30px]">#{index + 1}</span>
-                                                            <span className="flex-1 text-white font-medium">{team?.teamName || 'Unknown Team'}</span>
-                                                            <div className="flex gap-2">
-                                                                <button
-                                                                    onClick={() => handleMoveTeamInDraftOrder(index, Math.max(0, index - 1))}
-                                                                    disabled={index === 0}
-                                                                    className="px-3 py-1 bg-purple-800 hover:bg-purple-900 text-white rounded disabled:opacity-50 transition-colors"
-                                                                >
-                                                                    ↑
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handleMoveTeamInDraftOrder(index, Math.min(manualDraftOrder.length - 1, index + 1))}
-                                                                    disabled={index === manualDraftOrder.length - 1}
-                                                                    className="px-3 py-1 bg-purple-800 hover:bg-purple-900 text-white rounded disabled:opacity-50 transition-colors"
-                                                                >
-                                                                    ↓
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Current Draft Order Display */}
-                                    {(draftOrderType === 'random' || manualDraftOrder.length > 0) && (
-                                        <div className="mt-4 bg-emerald-700 p-4 rounded-lg">
-                                            <h6 className="text-md font-semibold mb-3 text-emerald-200">
-                                                Round 1 Order ({draftFormat === 'snake' ? 'Snake' : 'Standard'} · {draftRounds} rounds)
-                                            </h6>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                                                {manualDraftOrder.map((teamId, index) => {
-                                                    const team = teamsData.find(t => t.id === teamId);
-                                                    return (
-                                                        <div key={teamId} className="bg-emerald-800 p-2 rounded text-sm">
-                                                            <span className="text-emerald-300 font-bold">#{index + 1}</span>
-                                                            <span className="text-white ml-2">{team?.teamName || 'Unknown Team'}</span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-
-                            </div>
-                        )}
                 </div>
             </div>
-
-
 
             {/* Draft Board Tab */}
             {activeTab === 'draft-board' && (
@@ -1138,7 +924,19 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                     </div>
                         
                         {/* Current Team on the Clock */}
-                        {draftStatus === 'live' && draftData?.currentPick !== undefined && draftOrder[draftData.currentPick] && (
+                        {draftStatus === 'live' && isAuctionDraft && (
+                            <div className="mt-4 p-3 bg-purple-800 rounded-lg">
+                                <div className="text-purple-200 font-medium">
+                                    {auctionLive?.isActive ? 'Auction in progress' : 'Currently nominating:'}
+                                </div>
+                                <div className="text-white font-semibold text-lg">
+                                    {auctionLive?.isActive
+                                        ? (auctionPlayer?.name || 'Player')
+                                        : (teamsData.find((t) => t.id === nominatorTeamId)?.teamName || 'Unknown Team')}
+                                </div>
+                            </div>
+                        )}
+                        {draftStatus === 'live' && !isAuctionDraft && draftData?.currentPick !== undefined && draftOrder[draftData.currentPick] && (
                             <div className="mt-4 p-3 bg-purple-800 rounded-lg">
                                 <div className="text-purple-200 font-medium">Currently on the Clock:</div>
                                 <div className="text-white font-semibold text-lg">
@@ -1166,8 +964,8 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                         )}
                                 </div>
                                 
-                    {/* Enhanced Timer and Current Turn */}
-                    {(draftStatus === 'live' || draftStatus === 'paused') && (
+                    {/* Enhanced Timer and Current Turn (pick drafts only) */}
+                    {!isAuctionDraft && (draftStatus === 'live' || draftStatus === 'paused') && (
                         <div className="bg-purple-900 p-4 rounded-lg">
                             <h3 className="text-xl font-semibold mb-4 text-purple-200">
                                 {draftStatus === 'paused'
@@ -1244,8 +1042,96 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                         />
                     )}
 
+                    {/* Auction live interface */}
+                    {draftStatus === 'live' && isAuctionDraft && (
+                        <div className="space-y-6">
+                            <div className="bg-purple-900 p-4 rounded-lg">
+                                <h3 className="text-xl font-semibold mb-2 text-purple-200">Auction Draft</h3>
+                                {auctionLive?.isActive && auctionPlayer ? (
+                                    <div className="space-y-3">
+                                        <p className="text-lg text-white">
+                                            Bidding on: <span className="font-bold">{auctionPlayer.name}</span>
+                                            {' '}({auctionPlayer.position} · {auctionPlayer.nflTeam})
+                                        </p>
+                                        <p className="text-purple-200">
+                                            Current bid: <span className="font-bold text-white">${currentBid?.amount || auctionLive.currentBid || 1}</span>
+                                            {' '}by{' '}
+                                            {teamsData.find((t) => t.id === (currentBid?.teamId || auctionLive.currentBidder))?.teamName || 'Unknown'}
+                                        </p>
+                                        <p className="text-3xl font-bold text-red-300">{localTimeRemaining}s</p>
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            <input
+                                                type="number"
+                                                min={(currentBid?.amount || auctionLive.currentBid || 1) + 1}
+                                                value={bidAmount}
+                                                onChange={(e) => setBidAmount(parseInt(e.target.value, 10) || 1)}
+                                                className="px-3 py-2 bg-emerald-800 text-white border border-emerald-600 rounded w-28"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAuctionBid(bidAmount)}
+                                                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded font-semibold"
+                                            >
+                                                Place Bid
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <p className="text-purple-200 mb-1">
+                                            Nominating: {teamsData.find((t) => t.id === nominatorTeamId)?.teamName || 'Unknown Team'}
+                                        </p>
+                                        {canNominate ? (
+                                            <p className="text-white font-semibold">Your turn to nominate a player below.</p>
+                                        ) : (
+                                            <p className="text-purple-300">Waiting for nomination...</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {canNominate && (
+                                <SleeperPlayerList
+                                    players={visibleDraftPlayers}
+                                    title="Nominate a Player"
+                                    emptyMessage="No players available to nominate."
+                                    maxHeight="24rem"
+                                    compact
+                                    onPlayerSelect={handleNominatePlayer}
+                                    selectLabel="Nominate"
+                                />
+                            )}
+
+                            {!canNominate && !auctionLive?.isActive && (
+                                <div className="bg-emerald-900 p-4 rounded-lg text-emerald-300">
+                                    Waiting for {teamsData.find((t) => t.id === nominatorTeamId)?.teamName || 'the next team'} to nominate.
+                                </div>
+                            )}
+
+                            <div className="bg-emerald-900 p-4 rounded-lg">
+                                <h3 className="text-lg font-semibold mb-3 text-emerald-200">
+                                    Auction Results ({draftData?.draftedPlayers?.length || 0})
+                                </h3>
+                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                    {(draftData?.draftedPlayers || []).slice().reverse().map((player, index) => (
+                                        <div key={`${player.id}-${index}`} className="p-2 bg-emerald-800 rounded text-sm">
+                                            <span className="font-semibold text-white">{player.name}</span>
+                                            <span className="text-emerald-300">
+                                                {' '}· ${player.bid ?? player.salary ?? '?'} ·{' '}
+                                                {teamsData.find((t) => t.id === player.teamId)?.teamName || 'Unknown'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                    {!draftData?.draftedPlayers?.length && (
+                                        <p className="text-emerald-400 text-sm">No players awarded yet.</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Main Draft Interface - Available Players and Drafted Players */}
-                    {draftStatus === 'live' && (
+                    {draftStatus === 'live' && !isAuctionDraft && (
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                             <div className="lg:col-span-7 min-w-0">
                                 <SleeperPlayerList
@@ -1347,111 +1233,26 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                         </div>
                     )}
 
-                    {/* Standard/Snake Draft Interface - Legacy */}
-                    {!isAuctionDraft && draftData?.status === 'active' && draftStatus !== 'live' && (
-                        <div className="bg-emerald-900 p-4 rounded-lg">
-                            <h3 className="text-xl font-semibold mb-4 text-emerald-200">Available Players</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto">
-                                {availablePlayers.slice(0, 30).map(player => (
-                                    <div key={player.id} className="p-3 bg-emerald-800 rounded">
-                                        <div className="font-semibold">{player.name}</div>
-                                        <div className="text-sm text-emerald-300">
-                                            {player.position} • {player.nflTeam} • Rank: {player.rank}
-                </div>
-                                        {isMyTurn && (
-                                            <button
-                                                onClick={() => makePick(player)}
-                                                className="mt-2 w-full px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm"
-                                            >
-                                                Draft Player
-                                            </button>
-                                        )}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                    {/* Auction Draft Interface */}
-                    {isAuctionDraft && draftData?.status === 'active' && (
-                        <div className="bg-emerald-900 p-4 rounded-lg">
-                            <h3 className="text-xl font-semibold mb-4 text-emerald-200">Auction Draft</h3>
-                            
-                            {!auctionPlayer && isMyTurn && (
-                                <div className="mb-4">
-                                    <h4 className="text-lg font-semibold mb-2 text-emerald-200">Nominate a Player</h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto">
-                                        {availablePlayers.slice(0, 30).map(player => (
-                                            <div key={player.id} className="p-3 bg-emerald-800 rounded">
-                                                <div className="font-semibold">{player.name}</div>
-                                                <div className="text-sm text-emerald-300">
-                                                    {player.position} • {player.nflTeam} • Rank: {player.rank}
-                                                </div>
-                                                <button
-                                                    onClick={() => handleNominatePlayer(player)}
-                                                    className="mt-2 w-full px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm"
-                                                >
-                                                    Nominate
-                                                </button>
-                                            </div>
-                                        ))}
-                        </div>
-                    </div>
-                )}
-
-                            {auctionPlayer && (
-                                <div className="mb-4">
-                                    <h4 className="text-lg font-semibold mb-2 text-emerald-200">
-                                        Current Auction: {auctionPlayer.name}
-                                    </h4>
-                                    <div className="flex items-center space-x-4">
-                                        <div>
-                                            <span className="text-emerald-300">Current Bid: </span>
-                                            <span className="font-semibold">${currentBid?.amount || 1}</span>
-                                        </div>
-                                        <div>
-                                            <span className="text-emerald-300">By: </span>
-                                            <span className="font-semibold">
-                                                {teamsData.find(t => t.id === currentBid?.teamId)?.teamName || 'Unknown'}
-                                            </span>
-                                        </div>
-            </div>
-
-                                    {isMyTurn && (
-                                        <div className="mt-4 flex items-center space-x-4">
-                                            <input
-                                                type="number"
-                                                min={1}
-                                                value={bidAmount}
-                                                onChange={(e) => setBidAmount(parseInt(e.target.value) || 1)}
-                                                className="px-3 py-2 bg-emerald-800 text-white border border-emerald-600 rounded"
-                                            />
-                                            <button
-                                                onClick={() => handleAuctionBid(bidAmount)}
-                                                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded"
-                                            >
-                                                Place Bid
-                                            </button>
-                                </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Draft Order */}
+                    {/* Draft Order / Nomination Order */}
                     <div className="bg-emerald-900 p-4 rounded-lg">
-                        <h3 className="text-xl font-semibold mb-4 text-emerald-200">Draft Order</h3>
+                        <h3 className="text-xl font-semibold mb-4 text-emerald-200">
+                            {isAuctionDraft ? 'Nomination Order' : 'Draft Order'}
+                        </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {draftOrder.map((teamId, index) => {
+                            {(isAuctionDraft ? nominationOrder : draftOrder).map((teamId, index) => {
                                 const team = teamsData.find(t => t.id === teamId);
+                                const isCurrent = isAuctionDraft
+                                    ? (!auctionLive?.isActive && nominatorTeamId === teamId)
+                                    : draftData?.currentPick === index;
                                 return (
-                                    <div key={teamId} className={`p-3 rounded ${draftData?.currentPick === index ? 'bg-purple-800' : 'bg-emerald-800'}`}>
+                                    <div key={`${teamId}-${index}`} className={`p-3 rounded ${isCurrent ? 'bg-purple-800' : 'bg-emerald-800'}`}>
                                         <div className="font-semibold">
                                             {index + 1}. {team?.teamName || 'Unknown Team'}
                                         </div>
-                                        {draftData?.currentPick === index && (
-                                            <div className="text-sm text-purple-300">Current Pick</div>
+                                        {isCurrent && (
+                                            <div className="text-sm text-purple-300">
+                                                {isAuctionDraft ? 'Nominating' : 'Current Pick'}
+                                            </div>
                                         )}
                                     </div>
                                 );
@@ -1468,15 +1269,6 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                 title="Stop Draft"
             >
                 Stop the draft now? The current draft will be marked complete and no more picks can be made.
-            </ConfirmationModal>
-
-            <ConfirmationModal
-                isOpen={showResetModal}
-                onClose={() => setShowResetModal(false)}
-                onConfirm={handleResetDraft}
-                title="Reset Draft"
-            >
-                Reset the entire draft? All picks will be cleared, drafted players removed from benches, and the draft returned to order-set status.
             </ConfirmationModal>
         </div>
     );

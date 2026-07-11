@@ -4,6 +4,7 @@ import {
     generatePickOrder,
     MAX_ROUNDS,
 } from './draftOrderUtils.js';
+import { startAuctionLocal } from './localAuctionEngine.js';
 
 const normalizePlayer = (player) => {
     const firstName = (player.first_name || '').trim();
@@ -86,6 +87,10 @@ export async function startDraftLocal(db, leagueId, playerPool = []) {
     const draftType = league.settings?.draftType || draft.type || 'standard';
 
     if (draft.status === 'live') throw new Error('Draft is already live');
+
+    if (draftType === 'auction') {
+        return startAuctionLocal(db, leagueId, playerPool);
+    }
 
     let roundOneOrder = draft.roundOneOrder || [];
     if (!roundOneOrder.length) {
