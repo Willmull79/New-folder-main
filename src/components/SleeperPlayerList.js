@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ELIGIBLE_POSITIONS } from '../utils/sleeperPlayerService.js';
 
-const PlayerRow = ({ player, onPlayerSelect, selectLabel }) => {
+const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
     const team = player.nflTeam || player.team || 'FA';
     const fullName = [player.first_name, player.last_name].filter(Boolean).join(' ') || player.name || 'Unknown';
     const firstName = player.first_name || fullName.split(/\s+/)[0] || '—';
@@ -30,16 +30,26 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel }) => {
 
             {/* Desktop table row */}
             <tr className="hidden md:table-row border-t border-emerald-800 hover:bg-emerald-800/70">
-                <td className="px-3 py-2 text-white">{firstName}</td>
-                <td className="px-3 py-2 text-white">{lastName}</td>
-                <td className="px-3 py-2 text-emerald-300">{team}</td>
-                <td className="px-3 py-2 text-emerald-300">{player.position}</td>
+                {compact ? (
+                    <>
+                        <td className="px-2 py-2 text-white truncate max-w-0 w-[45%]">{fullName}</td>
+                        <td className="px-2 py-2 text-emerald-300 whitespace-nowrap">{player.position}</td>
+                        <td className="px-2 py-2 text-emerald-300 whitespace-nowrap">{team}</td>
+                    </>
+                ) : (
+                    <>
+                        <td className="px-3 py-2 text-white">{firstName}</td>
+                        <td className="px-3 py-2 text-white">{lastName}</td>
+                        <td className="px-3 py-2 text-emerald-300">{team}</td>
+                        <td className="px-3 py-2 text-emerald-300">{player.position}</td>
+                    </>
+                )}
                 {onPlayerSelect && (
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-2 py-2 text-right whitespace-nowrap w-[1%] sticky right-0 bg-emerald-900/95">
                         <button
                             type="button"
                             onClick={() => onPlayerSelect(player)}
-                            className="px-3 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-md text-xs font-semibold touch-target"
+                            className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-md text-xs font-semibold touch-target"
                         >
                             {selectLabel || 'Select'}
                         </button>
@@ -57,6 +67,7 @@ export const SleeperPlayerList = ({
     selectLabel,
     maxHeight = '24rem',
     emptyMessage = 'No players found.',
+    compact = false,
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [positionFilter, setPositionFilter] = useState('ALL');
@@ -94,7 +105,7 @@ export const SleeperPlayerList = ({
     }, [players, searchQuery, positionFilter, teamFilter]);
 
     const filterControls = (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 w-full">
+        <div className={`grid grid-cols-1 gap-2 w-full ${compact ? 'sm:grid-cols-3' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
             <input
                 type="search"
                 value={searchQuery}
@@ -116,7 +127,7 @@ export const SleeperPlayerList = ({
             <select
                 value={positionFilter}
                 onChange={(e) => setPositionFilter(e.target.value)}
-                className="w-full p-3 rounded-md bg-emerald-800 text-white border border-emerald-600 focus:border-purple-500 sm:col-span-2 lg:col-span-1"
+                className="w-full p-3 rounded-md bg-emerald-800 text-white border border-emerald-600 focus:border-purple-500"
             >
                 <option value="ALL">All Positions</option>
                 {ELIGIBLE_POSITIONS.map((position) => (
@@ -139,7 +150,7 @@ export const SleeperPlayerList = ({
             </div>
 
             <div
-                className="overflow-y-auto overflow-x-hidden rounded-md border border-emerald-700 -webkit-overflow-scrolling-touch"
+                className="overflow-y-auto overflow-x-auto rounded-md border border-emerald-700 -webkit-overflow-scrolling-touch"
                 style={{ maxHeight }}
             >
                 {filteredPlayers.length > 0 ? (
@@ -151,19 +162,32 @@ export const SleeperPlayerList = ({
                                     player={player}
                                     onPlayerSelect={onPlayerSelect}
                                     selectLabel={selectLabel}
+                                    compact={compact}
                                 />
                             ))}
                         </div>
 
-                        <table className="hidden md:table w-full text-sm">
-                            <thead className="sticky top-0 bg-emerald-950 text-emerald-200">
+                        <table className={`hidden md:table w-full text-sm ${compact ? 'table-fixed' : ''}`}>
+                            <thead className="sticky top-0 bg-emerald-950 text-emerald-200 z-10">
                                 <tr>
-                                    <th className="text-left px-3 py-2 font-semibold">First Name</th>
-                                    <th className="text-left px-3 py-2 font-semibold">Last Name</th>
-                                    <th className="text-left px-3 py-2 font-semibold">Team</th>
-                                    <th className="text-left px-3 py-2 font-semibold">Pos</th>
+                                    {compact ? (
+                                        <>
+                                            <th className="text-left px-2 py-2 font-semibold w-[45%]">Name</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[15%]">Pos</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[20%]">Team</th>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <th className="text-left px-3 py-2 font-semibold">First Name</th>
+                                            <th className="text-left px-3 py-2 font-semibold">Last Name</th>
+                                            <th className="text-left px-3 py-2 font-semibold">Team</th>
+                                            <th className="text-left px-3 py-2 font-semibold">Pos</th>
+                                        </>
+                                    )}
                                     {onPlayerSelect && (
-                                        <th className="text-right px-3 py-2 font-semibold">Action</th>
+                                        <th className="text-right px-2 py-2 font-semibold w-[20%] sticky right-0 bg-emerald-950">
+                                            Action
+                                        </th>
                                     )}
                                 </tr>
                             </thead>
@@ -174,6 +198,7 @@ export const SleeperPlayerList = ({
                                         player={player}
                                         onPlayerSelect={onPlayerSelect}
                                         selectLabel={selectLabel}
+                                        compact={compact}
                                     />
                                 ))}
                             </tbody>

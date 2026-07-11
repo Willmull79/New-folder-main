@@ -1246,54 +1246,55 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
 
                     {/* Main Draft Interface - Available Players and Drafted Players */}
                     {draftStatus === 'live' && (
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <div className="lg:col-span-1">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                            <div className="lg:col-span-7 min-w-0">
                                 <SleeperPlayerList
                                     players={visibleDraftPlayers}
                                     title="Available Players"
                                     emptyMessage="No players available. Refresh the page or ask the commissioner to restart the draft."
                                     maxHeight="24rem"
+                                    compact
                                     onPlayerSelect={isMyTurn ? makePick : undefined}
                                     selectLabel="Draft"
                                 />
                             </div>
 
-                            {/* Drafted Players - Two Columns of 12 Slots Each */}
-                            <div className="lg:col-span-2">
-                                <div className="bg-emerald-900 p-4 rounded-lg">
-                                    <h3 className="text-xl font-semibold mb-4 text-emerald-200">Drafted Players</h3>
+                            {/* Drafted Players - Two Columns of 12 Slots Each (narrower) */}
+                            <div className="lg:col-span-5 min-w-0">
+                                <div className="bg-emerald-900 p-3 rounded-lg">
+                                    <h3 className="text-lg font-semibold mb-3 text-emerald-200">Drafted Players</h3>
                                     
                                     {/* Two Columns Layout */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         {/* Left Column - 12 Slots */}
                                         <div>
-                                            <h4 className="text-lg font-semibold mb-3 text-emerald-200">Column 1 (1-12)</h4>
-                                            <div className="space-y-2">
+                                            <h4 className="text-sm font-semibold mb-2 text-emerald-200">Column 1 (1-12)</h4>
+                                            <div className="space-y-1.5">
                                                 {Array.from({ length: 12 }, (_, index) => {
                                                     const slotNumber = index + 1;
                                                     const draftedPlayer = draftData?.draftedPlayers?.[slotNumber - 1];
                                                     return (
                                                         <div 
                                                             key={slotNumber}
-                                                            className={`p-3 rounded border-2 ${
+                                                            className={`p-2 rounded border ${
                                                                 draftedPlayer 
                                                                     ? 'bg-emerald-800 border-emerald-600' 
                                                                     : 'bg-emerald-800/50 border-dashed border-emerald-600/50'
                                                             }`}
                                                         >
-                                                            <div className="text-xs text-emerald-400 mb-1">Slot {slotNumber}</div>
+                                                            <div className="text-[10px] text-emerald-400 mb-0.5">Slot {slotNumber}</div>
                                                             {draftedPlayer ? (
                                                                 <div>
-                                                                    <div className="font-semibold text-sm">{draftedPlayer.name}</div>
-                                                                    <div className="text-xs text-emerald-300">
-                                                                        {draftedPlayer.position} • {draftedPlayer.nflTeam} • Rank: {draftedPlayer.rank}
+                                                                    <div className="font-semibold text-xs truncate">{draftedPlayer.name}</div>
+                                                                    <div className="text-[10px] text-emerald-300 truncate">
+                                                                        {draftedPlayer.position} • {draftedPlayer.nflTeam}
                                                                     </div>
-                                                                    <div className="text-xs text-emerald-400 mt-1">
-                                                                        Drafted by: {teamsData.find(t => t.id === draftedPlayer.teamId)?.teamName || 'Unknown'}
+                                                                    <div className="text-[10px] text-emerald-400 mt-0.5 truncate">
+                                                                        {teamsData.find(t => t.id === draftedPlayer.teamId)?.teamName || 'Unknown'}
                                                                     </div>
                                                                 </div>
                                                             ) : (
-                                                                <div className="text-center text-emerald-400 text-sm py-2">
+                                                                <div className="text-center text-emerald-400 text-xs py-1">
                                                                     Empty
                                                                 </div>
                                                             )}
@@ -1305,33 +1306,33 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
 
                                         {/* Right Column - 12 Slots */}
                                         <div>
-                                            <h4 className="text-lg font-semibold mb-3 text-emerald-200">Column 2 (13-24)</h4>
-                                            <div className="space-y-2">
+                                            <h4 className="text-sm font-semibold mb-2 text-emerald-200">Column 2 (13-24)</h4>
+                                            <div className="space-y-1.5">
                                                 {Array.from({ length: 12 }, (_, index) => {
                                                     const slotNumber = index + 13;
                                                     const draftedPlayer = draftData?.draftedPlayers?.[slotNumber - 1];
                                                     return (
                                                         <div 
                                                             key={slotNumber}
-                                                            className={`p-3 rounded border-2 ${
+                                                            className={`p-2 rounded border ${
                                                                 draftedPlayer 
                                                                     ? 'bg-emerald-800 border-emerald-600' 
                                                                     : 'bg-emerald-800/50 border-dashed border-emerald-600/50'
                                                             }`}
                                                         >
-                                                            <div className="text-xs text-emerald-400 mb-1">Slot {slotNumber}</div>
+                                                            <div className="text-[10px] text-emerald-400 mb-0.5">Slot {slotNumber}</div>
                                                             {draftedPlayer ? (
                                                                 <div>
-                                                                    <div className="font-semibold text-sm">{draftedPlayer.name}</div>
-                                                                    <div className="text-xs text-emerald-300">
-                                                                        {draftedPlayer.position} • {draftedPlayer.nflTeam} • Rank: {draftedPlayer.rank}
+                                                                    <div className="font-semibold text-xs truncate">{draftedPlayer.name}</div>
+                                                                    <div className="text-[10px] text-emerald-300 truncate">
+                                                                        {draftedPlayer.position} • {draftedPlayer.nflTeam}
                                                                     </div>
-                                                                    <div className="text-xs text-emerald-400 mt-1">
-                                                                        Drafted by: {teamsData.find(t => t.id === draftedPlayer.teamId)?.teamName || 'Unknown'}
+                                                                    <div className="text-[10px] text-emerald-400 mt-0.5 truncate">
+                                                                        {teamsData.find(t => t.id === draftedPlayer.teamId)?.teamName || 'Unknown'}
                                                                     </div>
                                                                 </div>
                                                             ) : (
-                                                                <div className="text-center text-emerald-400 text-sm py-2">
+                                                                <div className="text-center text-emerald-400 text-xs py-1">
                                                                     Empty
                                                                 </div>
                                                             )}
