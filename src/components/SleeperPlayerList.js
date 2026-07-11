@@ -4,6 +4,8 @@ import { ELIGIBLE_POSITIONS } from '../utils/sleeperPlayerService.js';
 const PlayerRow = ({ player, onPlayerSelect, selectLabel }) => {
     const team = player.nflTeam || player.team || 'FA';
     const fullName = [player.first_name, player.last_name].filter(Boolean).join(' ') || player.name || 'Unknown';
+    const firstName = player.first_name || fullName.split(/\s+/)[0] || '—';
+    const lastName = player.last_name || fullName.split(/\s+/).slice(1).join(' ') || '—';
 
     return (
         <>
@@ -28,8 +30,8 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel }) => {
 
             {/* Desktop table row */}
             <tr className="hidden md:table-row border-t border-emerald-800 hover:bg-emerald-800/70">
-                <td className="px-3 py-2 text-white">{player.first_name || '—'}</td>
-                <td className="px-3 py-2 text-white">{player.last_name || '—'}</td>
+                <td className="px-3 py-2 text-white">{firstName}</td>
+                <td className="px-3 py-2 text-white">{lastName}</td>
                 <td className="px-3 py-2 text-emerald-300">{team}</td>
                 <td className="px-3 py-2 text-emerald-300">{player.position}</td>
                 {onPlayerSelect && (
@@ -83,10 +85,11 @@ export const SleeperPlayerList = ({
 
             const firstName = (player.first_name || '').toLowerCase();
             const lastName = (player.last_name || '').toLowerCase();
+            const fullName = (player.name || `${player.first_name || ''} ${player.last_name || ''}`).toLowerCase();
 
             return firstName.includes(query)
                 || lastName.includes(query)
-                || `${firstName} ${lastName}`.includes(query);
+                || fullName.includes(query);
         });
     }, [players, searchQuery, positionFilter, teamFilter]);
 

@@ -5,14 +5,23 @@ import {
     MAX_ROUNDS,
 } from './draftOrderUtils.js';
 
-const normalizePlayer = (player) => ({
-    id: player.id,
-    name: player.name,
-    position: player.position,
-    nflTeam: player.nflTeam || player.team || 'FA',
-    rank: player.rank || 999,
-    salary: player.salary || 1,
-});
+const normalizePlayer = (player) => {
+    const firstName = (player.first_name || '').trim();
+    const lastName = (player.last_name || '').trim();
+    const name = (player.name || `${firstName} ${lastName}`.trim() || 'Unknown').trim();
+
+    return {
+        id: player.id,
+        name,
+        first_name: firstName || name.split(/\s+/)[0] || '',
+        last_name: lastName || name.split(/\s+/).slice(1).join(' ') || '',
+        position: player.position,
+        nflTeam: player.nflTeam || player.team || 'FA',
+        team: player.nflTeam || player.team || 'FA',
+        rank: player.rank || 999,
+        salary: player.salary || 1,
+    };
+};
 
 export function buildTimerState(draft, leagueTeams = []) {
     if (!draft) {
