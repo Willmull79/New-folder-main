@@ -1,0 +1,50 @@
+[debug] [2026-07-11T02:33:35.508Z] ----------------------------------------------------------------------
+[debug] [2026-07-11T02:33:35.513Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\wfmul\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js deploy --only hosting,functions --project dynasty-420
+[debug] [2026-07-11T02:33:35.514Z] CLI Version:   14.11.2
+[debug] [2026-07-11T02:33:35.514Z] Platform:      win32
+[debug] [2026-07-11T02:33:35.514Z] Node Version:  v22.17.1
+[debug] [2026-07-11T02:33:35.515Z] Time:          Fri Jul 10 2026 22:33:35 GMT-0400 (Eastern Daylight Time)
+[debug] [2026-07-11T02:33:35.515Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-07-11T02:33:35.875Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-07-11T02:33:35.876Z] > authorizing via signed-in user (wwillmull@gmail.com)
+[debug] [2026-07-11T02:33:35.876Z] [iam] checking project dynasty-420 for permissions ["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get","firebasehosting.sites.update"]
+[debug] [2026-07-11T02:33:35.879Z] Checked if tokens are valid: false, expires at: 1783724572585
+[debug] [2026-07-11T02:33:35.880Z] Checked if tokens are valid: false, expires at: 1783724572585
+[debug] [2026-07-11T02:33:35.880Z] > refreshing access token with scopes: []
+[debug] [2026-07-11T02:33:35.883Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-07-11T02:33:35.884Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-07-11T02:33:36.119Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2026-07-11T02:33:36.119Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-07-11T02:33:36.134Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420:testIamPermissions [none]
+[debug] [2026-07-11T02:33:36.134Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420:testIamPermissions x-goog-quota-user=projects/dynasty-420
+[debug] [2026-07-11T02:33:36.134Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get","firebasehosting.sites.update"]}
+[debug] [2026-07-11T02:33:36.337Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420:testIamPermissions 200
+[debug] [2026-07-11T02:33:36.338Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get","firebasehosting.sites.update"]}
+[debug] [2026-07-11T02:33:36.338Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:36.339Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:36.339Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/dynasty-420/serviceAccounts/dynasty-420@appspot.gserviceaccount.com:testIamPermissions [none]
+[debug] [2026-07-11T02:33:36.339Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/dynasty-420/serviceAccounts/dynasty-420@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2026-07-11T02:33:36.599Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/dynasty-420/serviceAccounts/dynasty-420@appspot.gserviceaccount.com:testIamPermissions 200
+[debug] [2026-07-11T02:33:36.599Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/dynasty-420/serviceAccounts/dynasty-420@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2026-07-11T02:33:36.600Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:36.600Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:36.601Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/dynasty-420 [none]
+[debug] [2026-07-11T02:33:36.903Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/dynasty-420 200
+[debug] [2026-07-11T02:33:36.904Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/dynasty-420 {"projectId":"dynasty-420","projectNumber":"479339876160","displayName":" Dynasty-fantasy","name":"projects/dynasty-420","resources":{"hostingSite":"dynasty-420"},"state":"ACTIVE","labels":{"firebase":"enabled","firebaseworkflows/environment":"unspecified","firebase/storage-default-bucket":"created"},"etag":"1_49d4095a-014a-4da5-8c54-a85438c64225"}
+[info] 
+[info] === Deploying to 'dynasty-420'...
+[info] 
+[info] i  deploying functions, hosting 
+[debug] [2026-07-11T02:33:36.909Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:36.909Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:36.910Z] >>> [apiv2][query] GET https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420 [none]
+[debug] [2026-07-11T02:33:37.033Z] <<< [apiv2][status] GET https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420 200
+[debug] [2026-07-11T02:33:37.033Z] <<< [apiv2][body] GET https://cloudresourcemanager.googleapis.com/v1/projects/dynasty-420 {"projectNumber":"479339876160","projectId":"dynasty-420","lifecycleState":"ACTIVE","name":" Dynasty-fantasy","labels":{"firebase":"enabled","firebase-core":"disabled"},"createTime":"2025-07-17T02:26:30.353415Z"}
+[info] i  functions: preparing codebase default for deployment 
+[info] i  functions: ensuring required API cloudfunctions.googleapis.com is enabled... 
+[info] i  functions: ensuring required API cloudbuild.googleapis.com is enabled... 
+[info] i  artifactregistry: ensuring required API artifactregistry.googleapis.com is enabled... 
+[debug] [2026-07-11T02:33:37.041Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:37.042Z] Checked if tokens are valid: true, expires at: 1783740815120
+[debug] [2026-07-11T02:33:37.042Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/dynasty-420/adminSdkConfig [none]
