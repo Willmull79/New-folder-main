@@ -9,6 +9,7 @@ import {
     OFFENSIVE_STARTING_SLOTS,
     IDP_STARTING_SLOTS,
     DST_STARTING_SLOTS,
+    WAIVER_TYPE_OPTIONS,
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 
@@ -200,6 +201,7 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
     const [isLoading, setIsLoading] = useState(false);
     const [divisionsEnabled, setDivisionsEnabled] = useState(true);
     const [draftType, setDraftType] = useState('auction');
+    const [waiverType, setWaiverType] = useState('auction');
 
     const handleScoringChange = (rule, value) => {
         setScoringRules(prev => ({ ...prev, [rule]: Number(value) }));
@@ -274,6 +276,7 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                     startingSlots: startingSlots,
                     divisions: finalDivisions,
                     draftType: draftType,
+                    waiverType: waiverType,
                 },
                 auction: {
                     status: 'pending'
@@ -386,6 +389,14 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                             <option value="auction">Auction</option>
                             <option value="standard">Standard</option>
                             <option value="snake">Snake</option>
+                        </select>
+                    </label>
+                    <label className="block">
+                        <span className="text-emerald-200">Waiver Wire Type</span>
+                        <select value={waiverType} onChange={e => setWaiverType(e.target.value)} className="w-full p-3 mt-1 rounded-md bg-emerald-800 text-white border-emerald-600 focus:border-purple-500 focus:ring-2 focus:ring-purple-200">
+                            {WAIVER_TYPE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
                         </select>
                     </label>
                     <div className="sm:col-span-2 md:col-span-3">

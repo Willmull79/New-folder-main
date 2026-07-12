@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
+import { isFaabWaiver } from '../constants/leagueDefaults.js';
 
 // Import firebase globally (it's loaded in the HTML)
 const firebase = window.firebase;
@@ -15,7 +16,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
     const [teamsData, setTeamsData] = useState([]);
     const [availablePlayers, setAvailablePlayers] = useState([]);
 
-    const isAuctionDraft = currentLeague?.settings?.draftType === 'auction';
+    const useFaabWaivers = isFaabWaiver(currentLeague?.settings);
     const isAuctionComplete = currentLeague?.auction?.status === 'complete';
 
     useEffect(() => {
@@ -53,6 +54,13 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         }
     }, [currentLeague, allPlayers]);
 
+    const getPriorityOrderedTeams = () => [...teamsData].sort((a, b) => {
+        if (a.losses !== b.losses) {
+            return b.losses - a.losses;
+        }
+        return a.wins - b.wins;
+    });
+
     const handlePlaceWaiverBid = async () => {
         if (!isAuctionComplete) {
             return showMessage("You cannot add free agents until the auction is complete.", "error");
@@ -81,6 +89,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
 
             await waiverRef.set({
                 playerId: selectedPlayer,
+                waiverType: 'auction',
                 bids: {
                     [currentTeamId]: Number(bidAmount)
                 },
@@ -102,9 +111,51 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         }
     };
 
+    const handleSubmitWaiverClaim = async (playerId = selectedPlayer) => {
+        if (!playerId) {
+            return showMessage("Please select a player.", "error");
+        }
+
+        setIsLoading(true);
+        try {
+            const waiverRef = db.collection(`leagues/${currentLeague.id}/waivers`).doc(playerId);
+            const waiverDoc = await waiverRef.get();
+
+            if (waiverDoc.exists) {
+                const data = waiverDoc.data();
+                if (data.waiverType === 'auction' || data.bids) {
+                    return showMessage("This player is on an auction waiver.", "error");
+                }
+                const claimants = Array.isArray(data.claimants) ? data.claimants : [];
+                if (claimants.includes(currentTeamId)) {
+                    return showMessage("You already have a claim on this player.", "error");
+                }
+                await waiverRef.update({
+                    claimants: firebase.firestore.FieldValue.arrayUnion(currentTeamId),
+                });
+            } else {
+                await waiverRef.set({
+                    playerId,
+                    waiverType: 'traditional',
+                    claimants: [currentTeamId],
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    status: 'active',
+                });
+            }
+
+            showMessage(`Waiver claim submitted for ${getPlayerDetails(playerId, allPlayers).name}!`, "success");
+            setSelectedPlayer('');
+        } catch (error) {
+            console.error("Error submitting waiver claim:", error);
+            showMessage("Error submitting waiver claim.", "error");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleProcessWaiver = async (waiverId) => {
-        if (!isAuctionDraft) {
-            return showMessage("Only auction drafts use bidding waivers.", "error");
+        if (!useFaabWaivers) {
+            return showMessage("Use Process Claim for traditional priority waivers.", "error");
         }
 
         setIsLoading(true);
@@ -163,58 +214,52 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         }
     };
 
-    const handlePriorityWaiver = async (playerId) => {
-        if (isAuctionDraft) {
-            return showMessage("Auction drafts use bidding waivers.", "error");
-        }
-
+    const handleProcessTraditionalClaim = async (waiverId) => {
         setIsLoading(true);
         try {
-            // Calculate waiver priority based on record
-            const sortedTeams = [...teamsData].sort((a, b) => {
-                // Sort by losses (descending), then by wins (ascending)
-                if (a.losses !== b.losses) {
-                    return b.losses - a.losses;
-                }
-                return a.wins - b.wins;
-            });
+            const waiverRef = db.doc(`leagues/${currentLeague.id}/waivers/${waiverId}`);
+            const waiverDoc = await waiverRef.get();
 
-            const currentTeamIndex = sortedTeams.findIndex(t => t.id === currentTeamId);
-            if (currentTeamIndex === -1) {
-                return showMessage("Team not found in waiver priority.", "error");
+            if (!waiverDoc.exists) {
+                return showMessage("Waiver claim not found.", "error");
             }
 
-            // Check if any team with higher priority wants this player
-            for (let i = 0; i < currentTeamIndex; i++) {
-                const higherPriorityTeam = sortedTeams[i];
-                // In a real implementation, you'd check if this team has claimed the player
-                // For now, we'll just award to the current team
+            const waiver = waiverDoc.data();
+            const claimants = Array.isArray(waiver.claimants) ? waiver.claimants : [];
+            if (claimants.length === 0) {
+                return showMessage("No claims to process.", "error");
+            }
+
+            const priorityOrder = getPriorityOrderedTeams();
+            const winnerId = priorityOrder.find((team) => claimants.includes(team.id))?.id;
+            const winningTeam = teamsData.find((t) => t.id === winnerId);
+
+            if (!winningTeam) {
+                return showMessage("Winning team not found.", "error");
             }
 
             const batch = db.batch();
-            
-            // Add player to current team's bench
-            const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${currentTeamId}`);
+            const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${winningTeam.id}`);
             const updatedRoster = {
-                lineup: currentTeam.roster?.lineup || {},
-                bench: Array.isArray(currentTeam.roster?.bench) ? [...currentTeam.roster.bench] : [],
-                ir: Array.isArray(currentTeam.roster?.ir) ? [...currentTeam.roster.ir] : [],
+                lineup: winningTeam.roster?.lineup || {},
+                bench: Array.isArray(winningTeam.roster?.bench) ? [...winningTeam.roster.bench] : [],
+                ir: Array.isArray(winningTeam.roster?.ir) ? [...winningTeam.roster.ir] : [],
             };
-            updatedRoster.bench.push(playerId);
-            
+            updatedRoster.bench.push(waiver.playerId);
+
             batch.update(teamRef, { roster: updatedRoster });
-            
-            // Update league's rostered players
-            const leagueRef = db.doc(`leagues/${currentLeague.id}`);
-            batch.update(leagueRef, {
-                allRosteredPlayerIds: firebase.firestore.FieldValue.arrayUnion(playerId)
+            batch.update(db.doc(`leagues/${currentLeague.id}`), {
+                allRosteredPlayerIds: firebase.firestore.FieldValue.arrayUnion(waiver.playerId),
             });
-            
+            batch.update(waiverRef, {
+                status: 'processed',
+                awardedTo: winningTeam.id,
+            });
+
             await batch.commit();
-            
-            showMessage(`${getPlayerDetails(playerId, allPlayers).name} added to your roster!`, "success");
+            showMessage(`${getPlayerDetails(waiver.playerId, allPlayers).name} awarded to ${winningTeam.teamName}!`, "success");
         } catch (error) {
-            console.error("Error processing priority waiver:", error);
+            console.error("Error processing traditional waiver:", error);
             showMessage("Error processing waiver claim.", "error");
         } finally {
             setIsLoading(false);
@@ -222,15 +267,9 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
     };
 
     const getWaiverPriority = () => {
-        if (isAuctionDraft) return null;
+        if (useFaabWaivers) return null;
         
-        const sortedTeams = [...teamsData].sort((a, b) => {
-            if (a.losses !== b.losses) {
-                return b.losses - a.losses;
-            }
-            return a.wins - b.wins;
-        });
-
+        const sortedTeams = getPriorityOrderedTeams();
         const currentTeamIndex = sortedTeams.findIndex(t => t.id === currentTeamId);
         return currentTeamIndex + 1;
     };
@@ -344,47 +383,133 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         </div>
     );
 
-    const renderPriorityWaivers = () => (
-        <div className="space-y-6">
-            <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700">
-                <h3 className="text-2xl font-bold text-purple-400 mb-4">Waiver Priority</h3>
-                <p className="text-emerald-300 mb-4">
-                    Your waiver priority: <span className="text-purple-400 font-bold">#{getWaiverPriority()}</span>
-                </p>
-                <p className="text-emerald-400 text-sm">
-                    Priority is determined by record (most losses first, then fewest wins).
-                </p>
-            </div>
+    const renderPriorityWaivers = () => {
+        const activeClaims = waiverClaims.filter((claim) => claim.status === 'active');
+        const isCommissioner = currentLeague?.commissionerId === currentTeam?.ownerId;
 
-            <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700">
-                <h3 className="text-2xl font-bold text-emerald-400 mb-4">Available Players</h3>
+        return (
+            <div className="space-y-6">
+                <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700">
+                    <h3 className="text-2xl font-bold text-purple-400 mb-4">Waiver Priority</h3>
+                    <p className="text-emerald-300 mb-4">
+                        Your waiver priority: <span className="text-purple-400 font-bold">#{getWaiverPriority()}</span>
+                    </p>
+                    <p className="text-emerald-400 text-sm">
+                        Priority is determined by record (most losses first, then fewest wins). Claims are resolved in priority order.
+                    </p>
+                </div>
+
+                <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700">
+                    <h3 className="text-2xl font-bold text-yellow-400 mb-4">Submit Waiver Claim</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-emerald-200 font-medium mb-2">Select Player:</label>
+                            <select
+                                value={selectedPlayer}
+                                onChange={(e) => setSelectedPlayer(e.target.value)}
+                                className="w-full p-3 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors"
+                            >
+                                <option value="">Choose a player...</option>
+                                {availablePlayers.map((player) => (
+                                    <option key={player.id} value={player.id}>
+                                        {player.name} ({player.position} - {player.nflTeam})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => handleSubmitWaiverClaim()}
+                        disabled={isLoading || !selectedPlayer}
+                        className="mt-4 px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-md disabled:opacity-50 transition-colors shadow-lg"
+                    >
+                        {isLoading ? 'Submitting...' : 'Submit Waiver Claim'}
+                    </button>
+                </div>
+
                 <SleeperPlayerList
                     players={availablePlayers}
                     title="Waiver Wire Pool"
                     emptyMessage="No players available on waiver wire."
                     maxHeight="20rem"
-                    onPlayerSelect={(player) => handlePriorityWaiver(player.id)}
-                    selectLabel="Claim"
+                    onPlayerSelect={(player) => handleSubmitWaiverClaim(player.id)}
+                    selectLabel="Submit Waiver Claim"
                 />
+
+                <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700">
+                    <h3 className="text-2xl font-bold text-purple-400 mb-4">Active Waiver Claims</h3>
+                    {activeClaims.length === 0 ? (
+                        <p className="text-emerald-400">No active waiver claims.</p>
+                    ) : (
+                        <div className="space-y-4">
+                            {activeClaims.map((claim) => {
+                                const player = getPlayerDetails(claim.playerId, allPlayers);
+                                const claimants = Array.isArray(claim.claimants) ? claim.claimants : [];
+                                const claimantNames = claimants
+                                    .map((id) => teamsData.find((t) => t.id === id)?.teamName || id)
+                                    .join(', ');
+
+                                return (
+                                    <div key={claim.id} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div>
+                                                <h4 className="text-lg font-semibold text-white">{player?.name}</h4>
+                                                <p className="text-emerald-300">{player?.position} - {player?.nflTeam}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-yellow-400 font-bold">{claimants.length} claim{claimants.length === 1 ? '' : 's'}</p>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm text-emerald-400 mb-3">
+                                            Claimants: {claimantNames || 'None'}
+                                        </p>
+                                        <div className="flex justify-end gap-2">
+                                            {!claimants.includes(currentTeamId) && (
+                                                <button
+                                                    onClick={() => handleSubmitWaiverClaim(claim.playerId)}
+                                                    disabled={isLoading}
+                                                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md disabled:opacity-50 transition-colors"
+                                                >
+                                                    Submit Waiver Claim
+                                                </button>
+                                            )}
+                                            {isCommissioner && (
+                                                <button
+                                                    onClick={() => handleProcessTraditionalClaim(claim.id)}
+                                                    disabled={isLoading || claimants.length === 0}
+                                                    className="px-6 py-2 bg-purple-800 hover:bg-purple-900 text-white rounded-md disabled:opacity-50 transition-colors"
+                                                >
+                                                    {isLoading ? 'Processing...' : 'Process Claim'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-6xl mx-auto my-2 sm:my-8 text-white">
             <div className="mb-6">
                 <h2 className="text-3xl font-bold text-white mb-2">Waiver Wire</h2>
                 <p className="text-emerald-300">League: {currentLeague?.name}</p>
-                <p className="text-emerald-300">Draft Type: {currentLeague?.settings?.draftType || 'standard'}</p>
                 <p className="text-emerald-300">
-                    {isAuctionDraft 
+                    Waiver Type: {useFaabWaivers ? 'Auction (FAAB)' : 'Traditional Priority'}
+                </p>
+                <p className="text-emerald-300">
+                    {useFaabWaivers 
                         ? 'Auction-style waivers with 24-hour bidding periods'
                         : 'Priority-based waivers determined by record'
                     }
                 </p>
             </div>
 
-            {isAuctionDraft ? renderAuctionWaivers() : renderPriorityWaivers()}
+            {useFaabWaivers ? renderAuctionWaivers() : renderPriorityWaivers()}
         </div>
     );
-}; 
+};

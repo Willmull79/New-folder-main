@@ -14,6 +14,7 @@ import {
     splitStartingSlots,
     isTeamSalaryCapEnabled,
     isPlayerSalaryEnabled,
+    WAIVER_TYPE_OPTIONS,
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
@@ -49,7 +50,7 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
     const [dstSlots, setDstSlots] = useState({ ...DST_STARTING_SLOTS });
     const [divisions, setDivisions] = useState(currentLeague?.settings?.divisions || [{ name: 'Division 1' }, { name: 'Division 2' }]);
     const [divisionsEnabled, setDivisionsEnabled] = useState(currentLeague?.settings?.divisions?.length > 0);
-    
+    const [waiverType, setWaiverType] = useState(currentLeague?.settings?.waiverType || 'auction');
 
     useEffect(() => {
         if (!db || !currentLeague?.teams) {
@@ -102,6 +103,7 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
             : [{ name: 'Division 1' }, { name: 'Division 2' }];
         setDivisions(normalizedDivisions);
         setDivisionsEnabled(rawDivisions.length > 0);
+        setWaiverType(currentLeague.settings?.waiverType || 'auction');
     }, [currentLeague?.id]);
 
     const handleDeleteTeam = async () => {
@@ -277,6 +279,7 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                 'settings.defenseFormat': defenseFormat || existingSettings.defenseFormat || 'idp',
                 'settings.startingSlots': startingSlots,
                 'settings.divisions': finalDivisions,
+                'settings.waiverType': waiverType || 'auction',
             };
 
             if (existingSettings.draftType) {
@@ -301,6 +304,7 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                 defenseFormat: updates['settings.defenseFormat'],
                 startingSlots: updates['settings.startingSlots'],
                 divisions: updates['settings.divisions'],
+                waiverType: updates['settings.waiverType'],
             };
 
             showMessage("League settings updated successfully!", "success");
@@ -490,6 +494,18 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                                 disabled={!usePlayerSalaries}
                                 className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors disabled:opacity-50" 
                             />
+                        </label>
+                        <label className="block">
+                            <span className="text-emerald-200 font-medium">Waiver Wire Type</span>
+                            <select
+                                value={waiverType}
+                                onChange={e => setWaiverType(e.target.value)}
+                                className="w-full p-3 mt-1 rounded-md bg-emerald-100 text-emerald-900 border-2 border-emerald-300 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-colors"
+                            >
+                                {WAIVER_TYPE_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                            </select>
                         </label>
                         <div className="sm:col-span-2 md:col-span-3">
                             <label className="flex items-center space-x-3 cursor-pointer p-3 bg-emerald-700 rounded-md hover:bg-emerald-600 transition-colors">

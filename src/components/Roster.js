@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
-import { buildLineupDisplayOrder, INITIAL_ROSTER_LIMITS, isDefensivePlayerPosition, isTeamDefensePosition, formatPlayerLabel } from '../constants/leagueDefaults.js';
+import { buildLineupDisplayOrder, INITIAL_ROSTER_LIMITS, isDefensivePlayerPosition, isTeamDefensePosition, formatPlayerLabel, isFaabWaiver } from '../constants/leagueDefaults.js';
 import { appId } from '../config/firebase.js';
+
+const firebase = window.firebase;
 
 export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handleLeaveLeague, onPlayerTransaction, currentTeamId }) => {
     const { db } = useFirebase();
@@ -17,6 +19,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
     const leagueSettings = currentLeague?.settings || {};
     const lineupDisplayOrder = buildLineupDisplayOrder(currentLeague?.settings?.startingSlots);
     const isAuctionComplete = currentLeague?.auction?.status === 'complete';
+    const useFaabWaivers = isFaabWaiver(leagueSettings);
 
     useEffect(() => {
         setNewTeamName(teamData.teamName || '');
@@ -59,13 +62,16 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
 
             await waiverRef.set({
                 playerId: playerId,
+                waiverType: 'auction',
                 bids: {
                     [currentTeamId]: Number(bidAmount)
                 },
                 highestBid: Number(bidAmount),
                 highestBidder: currentTeamId,
                 waiverPosition: Number(waiverPosition),
-                expiration: db.Timestamp.fromDate(expiration)
+                expiration: firebase.firestore.Timestamp.fromDate(expiration),
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                status: 'active',
             });
 
             showMessage(`You have placed a bid of $${bidAmount} on ${getPlayerDetails(playerId, allPlayers).name} with waiver position ${waiverPosition}. The 24-hour auction has started.`, "success");
@@ -75,6 +81,45 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
         } catch (error) {
             showMessage("Error placing waiver bid.", "error");
             console.error("Waiver bid error:", error);
+        }
+    };
+
+    const handleSubmitWaiverClaim = async () => {
+        const playerId = playerSelectRef.current?.value;
+        if (!playerId) return showMessage("Please select a player.", "error");
+
+        const waiverRef = db.collection(`leagues/${currentLeague.id}/waivers`).doc(playerId);
+
+        try {
+            const waiverDoc = await waiverRef.get();
+            if (waiverDoc.exists) {
+                const data = waiverDoc.data();
+                const claimants = Array.isArray(data.claimants) ? data.claimants : [];
+                if (claimants.includes(currentTeamId)) {
+                    return showMessage("You already have a claim on this player.", "error");
+                }
+                if (data.waiverType === 'auction' || data.bids) {
+                    return showMessage("This player is on an auction waiver. Go to the Waiver Wire tab.", "error");
+                }
+                await waiverRef.update({
+                    claimants: firebase.firestore.FieldValue.arrayUnion(currentTeamId),
+                });
+                showMessage(`Waiver claim submitted for ${getPlayerDetails(playerId, allPlayers).name}.`, "success");
+                return;
+            }
+
+            await waiverRef.set({
+                playerId,
+                waiverType: 'traditional',
+                claimants: [currentTeamId],
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                status: 'active',
+            });
+
+            showMessage(`Waiver claim submitted for ${getPlayerDetails(playerId, allPlayers).name}.`, "success");
+        } catch (error) {
+            showMessage("Error submitting waiver claim.", "error");
+            console.error("Waiver claim error:", error);
         }
     };
 
@@ -293,8 +338,8 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
             
             <div className="mt-8 p-4 sm:p-6 bg-emerald-900 rounded-lg shadow-inner">
                 <h3 className="text-xl font-semibold text-white mb-4">Claim Player from Free Agency (Waiver Wire)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <label className="block col-span-full md:col-span-2">
+                <div className={`grid grid-cols-1 ${useFaabWaivers ? 'md:grid-cols-4' : 'md:grid-cols-2'} gap-4`}>
+                    <label className={`block ${useFaabWaivers ? 'col-span-full md:col-span-2' : 'col-span-full md:col-span-1'}`}>
                         <span className="text-emerald-300">Select Player:</span>
                         <select id="player-select" ref={playerSelectRef} className="w-full p-2 rounded-md bg-emerald-800 text-white border border-emerald-600 focus:ring-purple-500 focus:border-purple-500">
                             <option value="">Select a player...</option>
@@ -307,21 +352,32 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                             )}
                         </select>
                     </label>
-                    <label className="block">
-                        <span className="text-emerald-300">Waiver Position</span>
-                        <input type="number" min="1" max="12" value={waiverPosition} onChange={e => setWaiverPosition(e.target.value)} className="w-full p-2 rounded-md bg-emerald-800 text-white border border-emerald-600" />
-                    </label>
-                    <label className="block">
-                        <span className="text-emerald-300">Bid Amount ($)</span>
-                        <input type="number" step="0.5" min="0.5" value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="w-full p-2 rounded-md bg-emerald-800 text-white border border-emerald-600" />
-                    </label>
-                    <button 
-                        onClick={handlePlaceWaiverBid} 
-                        className="col-span-full px-6 py-3 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md shadow-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!isAuctionComplete}
-                    >
-                        {isAuctionComplete ? 'Place Bid & Start Auction' : 'Auction Not Complete'}
-                    </button>
+                    {useFaabWaivers ? (
+                        <>
+                            <label className="block">
+                                <span className="text-emerald-300">Waiver Position</span>
+                                <input type="number" min="1" max="12" value={waiverPosition} onChange={e => setWaiverPosition(e.target.value)} className="w-full p-2 rounded-md bg-emerald-800 text-white border border-emerald-600" />
+                            </label>
+                            <label className="block">
+                                <span className="text-emerald-300">Bid Amount ($)</span>
+                                <input type="number" step="0.5" min="0.5" value={bidAmount} onChange={e => setBidAmount(e.target.value)} className="w-full p-2 rounded-md bg-emerald-800 text-white border border-emerald-600" />
+                            </label>
+                            <button 
+                                onClick={handlePlaceWaiverBid} 
+                                className="col-span-full px-6 py-3 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md shadow-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={!isAuctionComplete}
+                            >
+                                {isAuctionComplete ? 'Place Bid & Start Auction' : 'Auction Not Complete'}
+                            </button>
+                        </>
+                    ) : (
+                        <button 
+                            onClick={handleSubmitWaiverClaim} 
+                            className="col-span-full md:col-span-1 px-6 py-3 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md shadow-lg transition duration-200"
+                        >
+                            Submit Waiver Claim
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

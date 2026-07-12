@@ -175,9 +175,16 @@ export const isDefensivePlayerPosition = (position) => ['DL', 'LB', 'DB'].includ
 
 export const isTeamDefensePosition = (position) => ['DST', 'DEF', 'D/ST'].includes(position);
 
-export const isTeamSalaryCapEnabled = (settings = {}) => settings.useTeamSalaryCap !== false;
+export const WAIVER_TYPE_OPTIONS = [
+    { value: 'auction', label: 'Auction (FAAB)' },
+    { value: 'traditional', label: 'Traditional Priority' },
+];
+
+export const isFaabWaiver = (settings = {}) => (settings.waiverType || 'auction') === 'auction';
 
 export const isPlayerSalaryEnabled = (settings = {}) => settings.usePlayerSalaries !== false;
+
+export const isTeamSalaryCapEnabled = (settings = {}) => settings.useTeamSalaryCap !== false;
 
 export const formatPlayerLabel = (player, settings = {}) => {
     if (!player) return '';
