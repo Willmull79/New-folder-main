@@ -25,6 +25,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
     const [activeTrade, setActiveTrade] = useState(null);
     const [selectedTeams, setSelectedTeams] = useState([]);
     const [tradeOffers, setTradeOffers] = useState({});
+    const [teamToAdd, setTeamToAdd] = useState('');
     const [isCommissioner, setIsCommissioner] = useState(false);
     const leagueSettings = currentLeague?.settings || {};
     const salaryRulesEnabled = isTeamSalaryCapEnabled(leagueSettings) && isPlayerSalaryEnabled(leagueSettings);
@@ -78,19 +79,18 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         };
     };
 
-    const addTeamToTrade = () => {
-        if (selectedTeams.length < 3) {
-            const availableTeams = teamsData.filter(team => !selectedTeams.includes(team.id));
-            if (availableTeams.length > 0) {
-                const newTeam = availableTeams[0];
-                setSelectedTeams([...selectedTeams, newTeam.id]);
-                setTradeOffers({
-                    ...tradeOffers,
-                    [newTeam.id]: initializeTradeOffer(newTeam.id)
-                });
-            }
-        }
+    const addTeamToTrade = (teamId) => {
+        if (!teamId || selectedTeams.length >= 3 || selectedTeams.includes(teamId)) return;
+
+        setSelectedTeams([...selectedTeams, teamId]);
+        setTradeOffers({
+            ...tradeOffers,
+            [teamId]: initializeTradeOffer(teamId)
+        });
+        setTeamToAdd('');
     };
+
+    const availableTeamsToAdd = teamsData.filter((team) => !selectedTeams.includes(team.id));
 
     const removeTeamFromTrade = (teamId) => {
         if (selectedTeams.length > 1 && teamId !== currentTeamId) {
@@ -245,6 +245,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             setActiveTrade(null);
             setSelectedTeams([currentTeamId]);
             setTradeOffers({});
+            setTeamToAdd('');
         } catch (error) {
             console.error("Error proposing trade:", error);
             showMessage("Error proposing trade.", "error");
@@ -375,13 +376,28 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                             </div>
                         );
                     })}
-                    {selectedTeams.length < 3 && (
-                        <button 
-                            onClick={addTeamToTrade}
-                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md"
-                        >
-                            + Add Team
-                        </button>
+                    {selectedTeams.length < 3 && availableTeamsToAdd.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2">
+                            <select
+                                value={teamToAdd}
+                                onChange={(e) => setTeamToAdd(e.target.value)}
+                                className="px-3 py-1 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 text-sm"
+                            >
+                                <option value="">Choose a team...</option>
+                                {availableTeamsToAdd.map((team) => (
+                                    <option key={team.id} value={team.id}>
+                                        {team.teamName}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={() => addTeamToTrade(teamToAdd)}
+                                disabled={!teamToAdd}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                + Add Team
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>
