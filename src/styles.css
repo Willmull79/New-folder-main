@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Remap purple utilities to burnt orange app-wide */
+@theme {
+  --color-purple-50: #fff6ef;
+  --color-purple-100: #ffe8d6;
+  --color-purple-200: #ffd0ad;
+  --color-purple-300: #f5a66e;
+  --color-purple-400: #e8883c;
+  --color-purple-500: #d96b1a;
+  --color-purple-600: #cc5500;
+  --color-purple-700: #a84600;
+  --color-purple-800: #8b3a00;
+  --color-purple-900: #6e2e00;
+  --color-purple-950: #4a1f00;
+}
+
 /* Custom styles for the fantasy football app */
 html {
   -webkit-text-size-adjust: 100%;

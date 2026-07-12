@@ -46,10 +46,19 @@ module.exports = {
           500: '#eab308',
           600: '#ca8a04',
         },
+        /* purple-* class names are remapped to burnt orange */
         purple: {
-          400: '#c084fc',
-          500: '#a855f7',
-          600: '#9333ea',
+          50: '#fff6ef',
+          100: '#ffe8d6',
+          200: '#ffd0ad',
+          300: '#f5a66e',
+          400: '#e8883c',
+          500: '#d96b1a',
+          600: '#cc5500',
+          700: '#a84600',
+          800: '#8b3a00',
+          900: '#6e2e00',
+          950: '#4a1f00',
         },
         orange: {
           400: '#fb923c',
