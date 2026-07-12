@@ -16,6 +16,7 @@ const WaiverWire = React.lazy(() => import('./components/WaiverWire.js').then(mo
 const Standings = React.lazy(() => import('./components/Standings.js'));
 const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
+const AccountProfile = React.lazy(() => import('./components/AccountProfile.js'));
 
 // Loading component for lazy-loaded components
 const LoadingSpinner = () => (
@@ -184,14 +185,28 @@ const App = () => {
                         currentAvatarUrl={userAvatarUrl}
                         showMessage={showMessage}
                         size="h-12 w-12"
+                        editable={false}
                     />
-                    <button
-                        type="button"
-                        onClick={() => auth.signOut()}
-                        className="px-4 py-2 bg-purple-800 hover:bg-purple-900 text-white text-sm rounded-md transition duration-200 touch-target"
-                    >
-                        Logout
-                    </button>
+                    <div className="flex flex-col gap-2">
+                        <button
+                            type="button"
+                            onClick={() => auth.signOut()}
+                            className="px-4 py-2 bg-purple-800 hover:bg-purple-900 text-white text-sm rounded-md transition duration-200 touch-target"
+                        >
+                            Logout
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('profile')}
+                            className={`px-4 py-2 text-sm rounded-md transition duration-200 touch-target ${
+                                activeTab === 'profile'
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-emerald-800 hover:bg-emerald-700 text-emerald-100'
+                            }`}
+                        >
+                            Profile
+                        </button>
+                    </div>
                 </div>
             </header>
 
@@ -219,6 +234,11 @@ const App = () => {
                 ) : (
                     <>
                         {activeTab === 'leagues' && <LeagueSelector userId={userId} showMessage={showMessage} userDisplayName={userDisplayName} onLeagueSelected={handleLeagueSelected} />}
+                        {activeTab === 'profile' && (
+                            <Suspense fallback={<LoadingSpinner />}>
+                                <AccountProfile showMessage={showMessage} />
+                            </Suspense>
+                        )}
                         <Suspense fallback={<LoadingSpinner />}>
                             {activeTab === 'roster' && currentTeam && currentLeague && <Roster teamData={currentTeam} allPlayers={allPlayers} showMessage={showMessage} currentLeague={currentLeague} handleLeaveLeague={handleLeaveLeague} onPlayerTransaction={handlePlayerTransaction} currentTeamId={currentTeamId} />}
                             {activeTab === 'draft-center' && currentLeague && currentTeam && <DraftCenter currentLeague={currentLeague} currentTeam={currentTeam} allPlayers={allPlayers} showMessage={showMessage} currentTeamId={currentTeamId} userId={userId} />}

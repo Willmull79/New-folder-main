@@ -354,8 +354,10 @@ export async function resetDraftLocal(db, leagueId, playerPool = []) {
         draft: {
             ...draft,
             status: roundOneOrder.length ? 'order_set' : 'pending',
+            type: draft.type || league.settings?.draftType || 'standard',
             currentPick: 0,
             currentRound: 1,
+            currentNominatorIndex: 0,
             currentTeamId: roundOneOrder[0] || null,
             availablePlayers: normalizedPool,
             draftedPlayers: [],
@@ -366,6 +368,18 @@ export async function resetDraftLocal(db, leagueId, playerPool = []) {
             completedAt: null,
             startedAt: null,
             stoppedByCommissioner: null,
+            auctionLive: {
+                currentPlayer: null,
+                currentBid: 0,
+                currentBidder: null,
+                bidDeadline: null,
+                isActive: false,
+                nominatorTeamId: roundOneOrder[0] || null,
+            },
+        },
+        auction: {
+            ...(league.auction || {}),
+            status: 'pending',
         },
     };
 

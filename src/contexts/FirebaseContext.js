@@ -107,6 +107,33 @@ export const FirebaseProvider = ({ children }) => {
         return true;
     }, [auth, db, applyUser]);
 
+    const updateUserProfile = useCallback(async ({ username, avatarUrl } = {}) => {
+        if (!db || !userId) {
+            throw new Error('Not signed in');
+        }
+
+        const updates = {};
+        if (username != null) {
+            const trimmed = String(username).trim();
+            if (!trimmed) throw new Error('Username cannot be empty');
+            updates.username = trimmed;
+        }
+        if (avatarUrl !== undefined) {
+            updates.avatarUrl = avatarUrl;
+        }
+        if (!Object.keys(updates).length) return;
+
+        const userProfileDocRef = db.doc(`artifacts/${appId}/users/${userId}/userProfile/settings`);
+        await userProfileDocRef.set(updates, { merge: true });
+
+        if (updates.username) {
+            setUserDisplayName(updates.username);
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'avatarUrl')) {
+            setUserAvatarUrl(updates.avatarUrl);
+        }
+    }, [db, userId]);
+
     return (
         <FirebaseContext.Provider value={{
             db,
@@ -119,6 +146,7 @@ export const FirebaseProvider = ({ children }) => {
             userDisplayName,
             userAvatarUrl,
             refreshAuthState,
+            updateUserProfile,
         }}>
             {children}
         </FirebaseContext.Provider>

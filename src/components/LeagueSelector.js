@@ -18,39 +18,28 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
     const [isLoadingJoin, setIsLoadingJoin] = useState(false);
     const [userLeagues, setUserLeagues] = useState([]);
     const [isCreatingLeague, setIsCreatingLeague] = useState(false);
-    const [allLeagues, setAllLeagues] = useState([]);
-    
-    console.log('LeagueSelector rendered with:', { userId, userDisplayName, db: !!db });
 
     useEffect(() => {
         if (!db || !userId) return;
 
-        // Get all leagues and check if user has teams in them
         const unsubscribe = db.collection("leagues")
             .onSnapshot(async (leagueSnapshot) => {
                 const userLeaguesData = [];
-                const allLeaguesData = [];
-                
+
                 for (const leagueDoc of leagueSnapshot.docs) {
                     const leagueData = leagueDoc.data();
                     const leagueId = leagueDoc.id;
-                    
-                    // Add to all leagues for debugging
-                    allLeaguesData.push({ id: leagueId, ...leagueData });
-                    
-                    // Check if user has a team in this league
+
                     const teamsSnapshot = await db.collection(`leagues/${leagueId}/teams`)
                         .where("ownerId", "==", userId)
                         .get();
-                    
+
                     if (!teamsSnapshot.empty) {
                         userLeaguesData.push({ id: leagueId, ...leagueData });
                     }
                 }
-                
-                console.log('All leagues found:', allLeaguesData.map(l => ({ id: l.id, name: l.name })));
+
                 setUserLeagues(userLeaguesData);
-                setAllLeagues(allLeaguesData);
             }, (error) => {
                 console.error("Error fetching user's leagues:", error);
                 showMessage("Error fetching your leagues.", "error");
@@ -183,22 +172,6 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
                     </button>
                 </div>
             </div>
-
-            {/* Debug Section - Show All Available Leagues */}
-            {allLeagues.length > 0 && (
-                <div className="mt-8 p-4 bg-red-900 rounded-lg border-2 border-red-600">
-                    <h3 className="text-xl font-semibold mb-4 text-red-200">Debug: All Available Leagues</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {allLeagues.map(league => (
-                            <div key={league.id} className="bg-red-800 p-3 rounded-lg">
-                                <div className="font-semibold text-white">{league.name}</div>
-                                <div className="text-sm text-red-300">ID: {league.id}</div>
-                                <div className="text-xs text-red-400">Commissioner: {league.commissionerId}</div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

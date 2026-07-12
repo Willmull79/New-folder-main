@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import draftService from '../utils/draftService.js';
+import nflPlayerService from '../utils/nflPlayerService.js';
+import { ConfirmationModal } from './ConfirmationModal.js';
 import {
     DRAFT_TYPE_OPTIONS,
     MAX_ROUNDS,
@@ -28,6 +30,13 @@ export const DraftSettingsPanel = ({
     const [pickTimeLimit, setPickTimeLimit] = useState(60);
     const [draftStatus, setDraftStatus] = useState('pending');
     const [isSaving, setIsSaving] = useState(false);
+    const [showResetDraftModal, setShowResetDraftModal] = useState(false);
+
+    useEffect(() => {
+        if (db) {
+            draftService.setFirestore(db);
+        }
+    }, [db]);
 
     const sectionClassName = variant === 'commissioner'
         ? 'mb-8 p-4 sm:p-6 bg-emerald-800 rounded-lg border-2 border-emerald-600'
@@ -270,6 +279,34 @@ export const DraftSettingsPanel = ({
         }
     };
 
+    const handleResetDraft = async () => {
+        if (!currentLeague?.id) return;
+
+        setIsSaving(true);
+        try {
+            try {
+                const players = await nflPlayerService.getAllPlayers();
+                draftService.setPlayerPool(players);
+            } catch (poolError) {
+                console.warn('Could not refresh player pool before reset:', poolError);
+            }
+
+            const result = await draftService.resetDraft(currentLeague.id);
+            setDraftStatus(result?.status || 'order_set');
+            setShowResetDraftModal(false);
+            showMessage('Draft reset successfully. Picks cleared and order preserved.', 'success');
+        } catch (error) {
+            console.error('Error resetting draft:', error);
+            showMessage(error.message || 'Failed to reset draft.', 'error');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const canResetDraft = ['live', 'paused', 'completed', 'order_set', 'scheduled'].includes(draftStatus)
+        || Boolean(currentLeague?.draft?.picks?.length)
+        || Boolean(currentLeague?.draft?.draftedPlayers?.length);
+
     const getTeamName = (teamId) => teamsData.find((team) => team.id === teamId)?.teamName || 'Unknown Team';
 
     return (
@@ -502,7 +539,26 @@ export const DraftSettingsPanel = ({
                         Start Draft
                     </button>
                 )}
+                {canResetDraft && (
+                    <button
+                        type="button"
+                        onClick={() => setShowResetDraftModal(true)}
+                        disabled={isSaving}
+                        className={`${buttonClassName} bg-orange-700 hover:bg-orange-800 text-white`}
+                    >
+                        Reset Draft
+                    </button>
+                )}
             </div>
+
+            <ConfirmationModal
+                isOpen={showResetDraftModal}
+                onClose={() => setShowResetDraftModal(false)}
+                onConfirm={handleResetDraft}
+                title="Reset Draft"
+            >
+                Reset the entire draft? All picks will be cleared, drafted players removed from benches, and the draft returned to order-set status. Draft settings and order are kept.
+            </ConfirmationModal>
         </div>
     );
 };
