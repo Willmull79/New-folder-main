@@ -15,6 +15,7 @@ import {
     isTeamSalaryCapEnabled,
     isPlayerSalaryEnabled,
     WAIVER_TYPE_OPTIONS,
+    realignRosterToStartingSlots,
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
@@ -287,6 +288,18 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
             }
 
             await leagueRef.update(updates);
+
+            // Keep team lineups in sync when positions are disabled/added
+            if (teamsData.length > 0) {
+                const rosterBatch = db.batch();
+                teamsData.forEach((team) => {
+                    const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${team.id}`);
+                    rosterBatch.update(teamRef, {
+                        roster: realignRosterToStartingSlots(team.roster, startingSlots),
+                    });
+                });
+                await rosterBatch.commit();
+            }
 
             const mergedSettings = {
                 ...existingSettings,

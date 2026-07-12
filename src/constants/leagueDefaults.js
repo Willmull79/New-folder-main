@@ -7,6 +7,20 @@ export const OFFENSIVE_STARTING_SLOTS = {
     K: 1,
 };
 
+export const POSITION_DISPLAY_LABELS = {
+    Flex: 'Any',
+    DFlex: 'DFlex',
+    DST: 'D/ST',
+};
+
+export const formatPositionLabel = (pos) => POSITION_DISPLAY_LABELS[pos] || pos;
+
+export const formatLineupSlotLabel = (slotKey = '') => {
+    const match = String(slotKey).match(/^([A-Za-z]+)(\d+)$/);
+    if (!match) return slotKey;
+    return `${formatPositionLabel(match[1])} ${match[2]}`;
+};
+
 export const IDP_STARTING_SLOTS = {
     DL: 2,
     LB: 2,
@@ -45,24 +59,32 @@ export const DEFENSE_FORMAT_LABELS = {
 const LINEUP_POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'Flex', 'DL', 'LB', 'DB', 'DFlex', 'DST', 'K'];
 
 export const splitStartingSlots = (startingSlots = DEFAULT_STARTING_SLOTS) => {
-    const offense = {};
-    const idp = {};
-    const dst = {};
+    const saved = startingSlots && typeof startingSlots === 'object' ? startingSlots : {};
+    const hasSaved = Object.keys(saved).length > 0;
 
-    Object.entries(OFFENSIVE_STARTING_SLOTS).forEach(([pos]) => {
-        if (startingSlots[pos] != null) offense[pos] = startingSlots[pos];
-    });
-    Object.entries(IDP_STARTING_SLOTS).forEach(([pos]) => {
-        if (startingSlots[pos] != null) idp[pos] = startingSlots[pos];
-    });
-    Object.entries(DST_STARTING_SLOTS).forEach(([pos]) => {
-        if (startingSlots[pos] != null) dst[pos] = startingSlots[pos];
-    });
+    const pickGroup = (defaults) => {
+        const result = {};
+        const groupHasAny = Object.keys(defaults).some((pos) => saved[pos] != null);
+        Object.entries(defaults).forEach(([pos, defaultCount]) => {
+            if (!hasSaved) {
+                result[pos] = defaultCount;
+            } else if (saved[pos] != null) {
+                result[pos] = Number(saved[pos]);
+            } else if (groupHasAny) {
+                // Omitted after being set to 0 (legacy saves filtered zeros out)
+                result[pos] = 0;
+            } else {
+                // Group not configured yet (e.g. IDP when league uses team D/ST only)
+                result[pos] = defaultCount;
+            }
+        });
+        return result;
+    };
 
     return {
-        offense: { ...OFFENSIVE_STARTING_SLOTS, ...offense },
-        idp: { ...IDP_STARTING_SLOTS, ...idp },
-        dst: { ...DST_STARTING_SLOTS, ...dst },
+        offense: pickGroup(OFFENSIVE_STARTING_SLOTS),
+        idp: pickGroup(IDP_STARTING_SLOTS),
+        dst: pickGroup(DST_STARTING_SLOTS),
     };
 };
 
@@ -91,7 +113,7 @@ export const buildStartingSlots = ({
     }
 
     return Object.fromEntries(
-        Object.entries(slots).filter(([, count]) => Number(count) > 0)
+        Object.entries(slots).map(([pos, count]) => [pos, Math.max(0, Number(count) || 0)])
     );
 };
 
@@ -114,19 +136,40 @@ export const buildInitialLineup = (startingSlots = DEFAULT_STARTING_SLOTS) => {
     return lineup;
 };
 
+/** Rebuild lineup to match startingSlots; players in removed slots go to bench. */
+export const realignRosterToStartingSlots = (roster = {}, startingSlots = DEFAULT_STARTING_SLOTS) => {
+    const nextLineup = buildInitialLineup(startingSlots);
+    const bench = Array.isArray(roster.bench) ? [...roster.bench.filter(Boolean)] : [];
+    const ir = Array.isArray(roster.ir) ? [...roster.ir.filter(Boolean)] : [];
+    const oldLineup = roster.lineup && typeof roster.lineup === 'object' && !Array.isArray(roster.lineup)
+        ? roster.lineup
+        : {};
+
+    Object.entries(oldLineup).forEach(([slot, playerId]) => {
+        if (!playerId) return;
+        if (Object.prototype.hasOwnProperty.call(nextLineup, slot)) {
+            nextLineup[slot] = playerId;
+        } else if (!bench.includes(playerId) && !ir.includes(playerId)) {
+            bench.push(playerId);
+        }
+    });
+
+    return { lineup: nextLineup, bench, ir };
+};
+
 export const formatDepthChartSummary = (startingSlots = DEFAULT_STARTING_SLOTS) => {
     const parts = [];
     LINEUP_POSITION_ORDER.forEach((pos) => {
         const count = Number(startingSlots[pos] || 0);
         if (count > 0) {
-            parts.push(`${count} ${pos}`);
+            parts.push(`${count} ${formatPositionLabel(pos)}`);
         }
     });
     return parts.length > 0 ? parts.join(', ') : 'No starters configured';
 };
 
 export const countStartingSlots = (startingSlots = DEFAULT_STARTING_SLOTS) => (
-    Object.values(startingSlots).reduce((total, count) => total + Number(count || 0), 0)
+    Object.values(startingSlots).reduce((total, count) => total + Math.max(0, Number(count) || 0), 0)
 );
 
 export const LINEUP_DISPLAY_ORDER = buildLineupDisplayOrder(DEFAULT_STARTING_SLOTS);

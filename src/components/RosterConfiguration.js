@@ -5,6 +5,7 @@ import {
     DEFENSE_FORMAT_LABELS,
     DEFENSE_FORMATS,
     formatDepthChartSummary,
+    formatPositionLabel,
 } from '../constants/leagueDefaults.js';
 
 const SlotInputs = ({ title, slots, onChange, inputClassName }) => (
@@ -13,7 +14,7 @@ const SlotInputs = ({ title, slots, onChange, inputClassName }) => (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
             {Object.entries(slots).map(([pos, count]) => (
                 <label key={pos} className="block">
-                    <span className="text-emerald-200">{pos}</span>
+                    <span className="text-emerald-200">{formatPositionLabel(pos)}</span>
                     <input
                         type="number"
                         min="0"
@@ -22,6 +23,9 @@ const SlotInputs = ({ title, slots, onChange, inputClassName }) => (
                         onChange={(e) => onChange(pos, Number(e.target.value))}
                         className={inputClassName}
                     />
+                    {Number(count) === 0 && (
+                        <span className="block text-xs text-emerald-400 mt-1">Disabled</span>
+                    )}
                 </label>
             ))}
         </div>
@@ -84,7 +88,7 @@ export const RosterConfiguration = ({
                     <h4 className={headingClassName}>Depth Chart</h4>
                 )}
                 <p className="text-sm text-emerald-300 mb-4">
-                    Customize your starting lineup. Choose individual defensive players (IDP), a full team defense (D/ST), both, or offense only.
+                    Customize your starting lineup. Set any position to 0 to disable it (including Any / Flex). Choose individual defensive players (IDP), a full team defense (D/ST), both, or offense only.
                 </p>
 
                 <div className={`mb-6 p-4 rounded-lg ${embedded ? 'bg-emerald-950/70 border border-emerald-700' : 'bg-emerald-950/50 border border-emerald-700'}`}>

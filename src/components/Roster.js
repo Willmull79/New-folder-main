@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
-import { buildLineupDisplayOrder, INITIAL_ROSTER_LIMITS, isDefensivePlayerPosition, isTeamDefensePosition, formatPlayerLabel, isFaabWaiver } from '../constants/leagueDefaults.js';
+import { buildLineupDisplayOrder, INITIAL_ROSTER_LIMITS, isDefensivePlayerPosition, isTeamDefensePosition, formatPlayerLabel, isFaabWaiver, formatLineupSlotLabel } from '../constants/leagueDefaults.js';
 import { appId } from '../config/firebase.js';
 
 const firebase = window.firebase;
@@ -216,7 +216,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                         <div className="absolute right-0 mt-2 w-48 bg-emerald-800 rounded-md shadow-lg z-10">
                             {eligibleSlots.map(slot => (
                                 <a key={slot} href="#" onClick={() => { handleMovePlayer(playerId, from.toLowerCase(), slot); setShowDropdown(false); }} className="block px-4 py-2 text-sm text-emerald-200 hover:bg-purple-600">
-                                    Move to {slot.replace(/(\d+)/, ' $1')}
+                                    Move to {formatLineupSlotLabel(slot)}
                                 </a>
                             ))}
                         </div>
@@ -262,7 +262,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                             return (
                                 <div key={slot} className="bg-emerald-800 p-3 rounded-md flex items-center justify-between">
                                     <div className="flex items-center gap-4 truncate">
-                                        <span className="font-bold text-purple-300 w-16 flex-shrink-0">{slot.replace(/(\d+)/, ' $1')}</span>
+                                        <span className="font-bold text-purple-300 w-16 flex-shrink-0">{formatLineupSlotLabel(slot)}</span>
                                         {player ? (
                                              <span className="truncate">{formatPlayerLabel(player, leagueSettings)}</span>
                                         ) : (
