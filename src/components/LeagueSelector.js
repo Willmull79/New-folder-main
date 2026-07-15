@@ -12,13 +12,26 @@ import {
     WAIVER_TYPE_OPTIONS,
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
+import { ConfirmationModal } from './ConfirmationModal.js';
 
-export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueSelected }) => {
+const firebase = window.firebase;
+
+export const LeagueSelector = ({
+    userId,
+    showMessage,
+    userDisplayName,
+    onLeagueSelected,
+    pendingJoinLeagueId = null,
+    onJoinInviteHandled,
+}) => {
     const { db } = useFirebase();
     const [joinLeagueId, setJoinLeagueId] = useState('');
     const [isLoadingJoin, setIsLoadingJoin] = useState(false);
     const [userLeagues, setUserLeagues] = useState([]);
     const [isCreatingLeague, setIsCreatingLeague] = useState(false);
+    const [inviteLeagueId, setInviteLeagueId] = useState(null);
+    const [inviteLeagueName, setInviteLeagueName] = useState('');
+    const [showJoinInviteModal, setShowJoinInviteModal] = useState(false);
 
     useEffect(() => {
         if (!db || !userId) return;
@@ -48,6 +61,42 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
         return () => unsubscribe();
     }, [db, userId]);
 
+    // Prompt to join when arriving via ?joinLeague= invite link
+    useEffect(() => {
+        if (!db || !userId || !pendingJoinLeagueId) return undefined;
+
+        let cancelled = false;
+
+        const loadInvite = async () => {
+            try {
+                const leagueDoc = await db.doc(`leagues/${pendingJoinLeagueId}`).get();
+                if (cancelled) return;
+
+                if (!leagueDoc.exists) {
+                    showMessage('Invite link is invalid. League not found.', 'error');
+                    onJoinInviteHandled?.();
+                    return;
+                }
+
+                setInviteLeagueId(pendingJoinLeagueId);
+                setInviteLeagueName(leagueDoc.data()?.name || 'this league');
+                setJoinLeagueId(pendingJoinLeagueId);
+                setShowJoinInviteModal(true);
+            } catch (error) {
+                console.error('Error loading join invite:', error);
+                if (!cancelled) {
+                    showMessage('Could not open the league invite.', 'error');
+                    onJoinInviteHandled?.();
+                }
+            }
+        };
+
+        loadInvite();
+        return () => {
+            cancelled = true;
+        };
+    }, [db, userId, pendingJoinLeagueId]);
+
     const handleJoinLeague = async (leagueIdToJoin) => {
         if (!leagueIdToJoin.trim()) return showMessage("League ID cannot be empty.", "error");
         setIsLoadingJoin(true);
@@ -73,6 +122,7 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
                 const existingTeamId = existingTeamQuery.docs[0].id;
                 showMessage("You already have a team in this league. Entering now.", "info");
                 onLeagueSelected(leagueIdToJoin, existingTeamId);
+                onJoinInviteHandled?.();
                 return;
             }
 
@@ -114,6 +164,7 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
 
             showMessage(`Successfully joined league "${leagueData.name}"!`, "success");
             onLeagueSelected(leagueIdToJoin, newTeamRef.id);
+            onJoinInviteHandled?.();
 
         } catch (error) {
             showMessage("Error joining league.", "error");
@@ -121,6 +172,18 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
         } finally {
             setIsLoadingJoin(false);
         }
+    };
+
+    const handleConfirmJoinInvite = async () => {
+        setShowJoinInviteModal(false);
+        if (inviteLeagueId) {
+            await handleJoinLeague(inviteLeagueId);
+        }
+    };
+
+    const handleDismissJoinInvite = () => {
+        setShowJoinInviteModal(false);
+        onJoinInviteHandled?.();
     };
     
     if (isCreatingLeague) {
@@ -173,6 +236,16 @@ export const LeagueSelector = ({ userId, showMessage, userDisplayName, onLeagueS
                     </button>
                 </div>
             </div>
+
+            <ConfirmationModal
+                isOpen={showJoinInviteModal}
+                onClose={handleDismissJoinInvite}
+                onConfirm={handleConfirmJoinInvite}
+                title="League Invite"
+            >
+                You&apos;ve been invited to join <span className="text-white font-semibold">{inviteLeagueName}</span>.
+                Would you like to join this league now?
+            </ConfirmationModal>
         </div>
     );
 };
@@ -258,6 +331,7 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
             await newLeagueRef.set({
                 name: leagueName.trim(),
                 commissionerId: userId,
+                coCommissioners: [],
                 teams: [],
                 allRosteredPlayerIds: [],
                 settings: {

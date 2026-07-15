@@ -225,6 +225,17 @@ export const WAIVER_TYPE_OPTIONS = [
 
 export const isFaabWaiver = (settings = {}) => (settings.waiverType || 'auction') === 'auction';
 
+/** True if user is primary commissioner or listed in coCommissioners. */
+export const isLeagueCommissioner = (league, userId) => {
+    if (!league || !userId) return false;
+    if (league.commissionerId === userId) return true;
+    return Array.isArray(league.coCommissioners) && league.coCommissioners.includes(userId);
+};
+
+export const isPrimaryCommissioner = (league, userId) => (
+    Boolean(league && userId && league.commissionerId === userId)
+);
+
 export const isPlayerSalaryEnabled = (settings = {}) => settings.usePlayerSalaries !== false;
 
 export const isTeamSalaryCapEnabled = (settings = {}) => settings.useTeamSalaryCap !== false;

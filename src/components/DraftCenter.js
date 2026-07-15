@@ -10,6 +10,7 @@ import {
     MAX_ROUNDS,
 } from '../utils/draftOrderUtils.js';
 import { isOnActiveNflRoster } from '../utils/helpers.js';
+import { isLeagueCommissioner } from '../constants/leagueDefaults.js';
 
 const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, currentTeamId, userId }) => {
     const { db } = useFirebase();
@@ -55,7 +56,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
     const auctionResolveInFlightRef = useRef(false);
     const [localTimeRemaining, setLocalTimeRemaining] = useState(0);
 
-    const isCommissioner = currentLeague?.commissionerId === userId;
+    const isCommissioner = isLeagueCommissioner(currentLeague, userId);
     const isAuctionDraft = (
         currentLeague?.settings?.draftType === 'auction'
         || draftData?.type === 'auction'

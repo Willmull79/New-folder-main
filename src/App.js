@@ -4,9 +4,15 @@ import { AuthScreen } from './components/AuthScreen.js';
 import { LeagueSelector } from './components/LeagueSelector.js';
 import { Avatar } from './components/Avatar.js';
 import { AppNavigation } from './components/AppNavigation.js';
-import nflPlayerService from './utils/nflPlayerService.js';
+import nflPlayerService, {
+    fetchPlayersFromFirestore,
+    readPlayersFromSessionCache,
+    writePlayersToSessionCache,
+} from './utils/nflPlayerService.js';
 import draftService from './utils/draftService.js';
 import { appId } from './config/firebase.js';
+import { isOnActiveNflRoster } from './utils/helpers.js';
+import { isLeagueCommissioner } from './constants/leagueDefaults.js';
 
 // Lazy load components to reduce initial bundle size
 const Roster = React.lazy(() => import('./components/Roster.js').then(module => ({ default: module.Roster })));
@@ -17,6 +23,7 @@ const Standings = React.lazy(() => import('./components/Standings.js'));
 const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
 const AccountProfile = React.lazy(() => import('./components/AccountProfile.js'));
+const AccountSettings = React.lazy(() => import('./components/AccountSettings.js'));
 
 // Loading component for lazy-loaded components
 const LoadingSpinner = () => (
@@ -37,9 +44,40 @@ const App = () => {
     const [teamsData, setTeamsData] = useState([]);
     const [allPlayers, setAllPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [pendingJoinLeagueId, setPendingJoinLeagueId] = useState(null);
 
     const isLoadingData = (currentLeagueId && !currentLeague) || (currentTeamId && !currentTeam);
-    const isCommissioner = currentLeague?.commissionerId === userId;
+    const isCommissioner = isLeagueCommissioner(currentLeague, userId);
+
+    // Capture ?joinLeague= invite links (works after login because param stays in the URL)
+    useEffect(() => {
+        if (!userId) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const joinId = (params.get('joinLeague') || '').trim();
+        if (!joinId) return;
+
+        setPendingJoinLeagueId(joinId);
+        setActiveTab('leagues');
+        setCurrentLeagueId(null);
+        setCurrentTeamId(null);
+        setCurrentLeague(null);
+        setCurrentTeam(null);
+    }, [userId]);
+
+    const clearJoinInviteFromUrl = () => {
+        setPendingJoinLeagueId(null);
+        try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.has('joinLeague')) {
+                url.searchParams.delete('joinLeague');
+                const next = `${url.pathname}${url.search}${url.hash}`;
+                window.history.replaceState({}, '', next);
+            }
+        } catch (error) {
+            console.warn('Could not clear joinLeague URL param:', error);
+        }
+    };
 
     useEffect(() => {
         if (!db || !currentLeague?.teams) {
@@ -127,6 +165,7 @@ const App = () => {
     useEffect(() => {
         if (db) {
             draftService.setFirestore(db);
+            nflPlayerService.setFirebaseDB(db);
         }
     }, [db]);
 
@@ -136,20 +175,55 @@ const App = () => {
         }
     }, [allPlayers]);
 
-    // Load all players when component mounts
+    // Master NFL player list: sessionStorage first, then one-time Firestore .get()
     useEffect(() => {
+        if (!db) return undefined;
+
+        let cancelled = false;
+
         const loadPlayers = async () => {
             try {
+                const cachedPlayers = readPlayersFromSessionCache();
+                if (cachedPlayers?.length) {
+                    if (!cancelled) {
+                        setAllPlayers(cachedPlayers.filter(isOnActiveNflRoster));
+                    }
+                    return;
+                }
+
+                const firestorePlayers = await fetchPlayersFromFirestore(db);
+                if (firestorePlayers.length) {
+                    writePlayersToSessionCache(firestorePlayers);
+                    if (!cancelled) {
+                        setAllPlayers(firestorePlayers);
+                    }
+                    return;
+                }
+
+                // Fallback if Firestore players collection is empty
                 const players = await nflPlayerService.getAllPlayers();
-                setAllPlayers(players);
+                if (!cancelled) {
+                    setAllPlayers(players);
+                }
             } catch (error) {
                 console.error('Error loading players:', error);
-                showMessage('Error loading player data', 'error');
+                try {
+                    const players = await nflPlayerService.getAllPlayers();
+                    if (!cancelled) {
+                        setAllPlayers(players);
+                    }
+                } catch (fallbackError) {
+                    console.error('Fallback player load failed:', fallbackError);
+                    showMessage('Error loading player data', 'error');
+                }
             }
         };
-        
+
         loadPlayers();
-    }, []);
+        return () => {
+            cancelled = true;
+        };
+    }, [db]);
 
     const handlePlayerTransaction = () => {};
 
@@ -233,10 +307,24 @@ const App = () => {
                     <LoadingSpinner />
                 ) : (
                     <>
-                        {activeTab === 'leagues' && <LeagueSelector userId={userId} showMessage={showMessage} userDisplayName={userDisplayName} onLeagueSelected={handleLeagueSelected} />}
+                        {activeTab === 'leagues' && (
+                            <LeagueSelector
+                                userId={userId}
+                                showMessage={showMessage}
+                                userDisplayName={userDisplayName}
+                                onLeagueSelected={handleLeagueSelected}
+                                pendingJoinLeagueId={pendingJoinLeagueId}
+                                onJoinInviteHandled={clearJoinInviteFromUrl}
+                            />
+                        )}
                         {activeTab === 'profile' && (
                             <Suspense fallback={<LoadingSpinner />}>
                                 <AccountProfile showMessage={showMessage} />
+                            </Suspense>
+                        )}
+                        {activeTab === 'account-settings' && (
+                            <Suspense fallback={<LoadingSpinner />}>
+                                <AccountSettings showMessage={showMessage} />
                             </Suspense>
                         )}
                         <Suspense fallback={<LoadingSpinner />}>

@@ -16,13 +16,16 @@ import {
     isPlayerSalaryEnabled,
     WAIVER_TYPE_OPTIONS,
     realignRosterToStartingSlots,
+    isPrimaryCommissioner,
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
 import { appId } from '../config/firebase.js';
 
+const firebase = window.firebase;
+
 export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onLeagueUpdate }) => {
-    const { db } = useFirebase();
+    const { db, userId } = useFirebase();
     const [teamsData, setTeamsData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -52,6 +55,39 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
     const [divisions, setDivisions] = useState(currentLeague?.settings?.divisions || [{ name: 'Division 1' }, { name: 'Division 2' }]);
     const [divisionsEnabled, setDivisionsEnabled] = useState(currentLeague?.settings?.divisions?.length > 0);
     const [waiverType, setWaiverType] = useState(currentLeague?.settings?.waiverType || 'auction');
+
+    const joinLink = currentLeague?.id
+        ? `${window.location.origin}?joinLeague=${currentLeague.id}`
+        : '';
+
+    const handleShareInvite = async () => {
+        if (!joinLink) {
+            return showMessage('Join link is not available.', 'error');
+        }
+
+        if (navigator.share) {
+            try {
+                await navigator.share({
+                    title: 'Join my Fantasy League',
+                    text: 'You have been invited to join my Fantasy Football League!',
+                    url: joinLink,
+                });
+                return;
+            } catch (error) {
+                // User cancelled the share sheet — don't treat as a failure.
+                if (error?.name === 'AbortError') return;
+                console.warn('Native share failed, falling back to clipboard:', error);
+            }
+        }
+
+        try {
+            await navigator.clipboard.writeText(joinLink);
+            showMessage('Invite link copied to your clipboard!', 'success');
+        } catch (error) {
+            console.error('Failed to copy invite link:', error);
+            showMessage('Could not share or copy the link. Copy it manually from the box below.', 'error');
+        }
+    };
 
     useEffect(() => {
         if (!db || !currentLeague?.teams) {
@@ -218,6 +254,59 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
         } catch (error) {
             console.error("Error updating team record:", error);
             showMessage("Failed to update team record.", "error");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleGrantCoCommissioner = async (ownerId) => {
+        if (!db || !currentLeague?.id || !ownerId) return;
+        if (!isPrimaryCommissioner(currentLeague, userId)) {
+            return showMessage('Only the primary commissioner can grant co-commissioner access.', 'error');
+        }
+
+        setIsLoading(true);
+        try {
+            await db.doc(`leagues/${currentLeague.id}`).update({
+                coCommissioners: firebase.firestore.FieldValue.arrayUnion(ownerId),
+            });
+            const nextList = Array.from(new Set([...(currentLeague.coCommissioners || []), ownerId]));
+            onLeagueUpdate?.({
+                ...currentLeague,
+                coCommissioners: nextList,
+            });
+            showMessage('Commissioner access granted successfully.', 'success');
+        } catch (error) {
+            console.error('Error granting co-commissioner access:', error);
+            showMessage(error?.message || 'Failed to grant commissioner access.', 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleRevokeCoCommissioner = async (ownerId) => {
+        if (!db || !currentLeague?.id || !ownerId) return;
+        if (!isPrimaryCommissioner(currentLeague, userId)) {
+            return showMessage('Only the primary commissioner can revoke co-commissioner access.', 'error');
+        }
+        if (ownerId === currentLeague.commissionerId) {
+            return showMessage('Cannot revoke the primary commissioner.', 'error');
+        }
+
+        setIsLoading(true);
+        try {
+            await db.doc(`leagues/${currentLeague.id}`).update({
+                coCommissioners: firebase.firestore.FieldValue.arrayRemove(ownerId),
+            });
+            const nextList = (currentLeague.coCommissioners || []).filter((id) => id !== ownerId);
+            onLeagueUpdate?.({
+                ...currentLeague,
+                coCommissioners: nextList,
+            });
+            showMessage('Commissioner access revoked successfully.', 'success');
+        } catch (error) {
+            console.error('Error revoking co-commissioner access:', error);
+            showMessage(error?.message || 'Failed to revoke commissioner access.', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -417,6 +506,25 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                 <h2 className="text-3xl font-bold text-white mb-2">Commissioner Tools</h2>
                 <p className="text-emerald-300">League: {currentLeague?.name}</p>
                 <p className="text-emerald-300">Manage league settings, teams, and operations</p>
+            </div>
+
+            {/* Invite Managers */}
+            <div className="bg-emerald-900 p-6 rounded-lg shadow-lg mb-6 border-2 border-emerald-700">
+                <h3 className="text-2xl font-bold text-purple-400 mb-2">Invite Managers</h3>
+                <p className="text-sm text-emerald-300 mb-4">
+                    Share this league with managers via any app they use. On devices without native share, the link is copied to the clipboard instead.
+                </p>
+                <button
+                    type="button"
+                    onClick={handleShareInvite}
+                    className="px-6 py-3 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md transition-colors mb-4"
+                >
+                    Share Invite
+                </button>
+                <div className="bg-emerald-950/60 border border-emerald-700 rounded-md p-3">
+                    <p className="text-xs text-emerald-400 mb-1">Join link</p>
+                    <p className="text-sm text-emerald-100 break-all">{joinLink || 'Unavailable'}</p>
+                </div>
             </div>
 
             {/* League Settings Section */}
@@ -779,6 +887,63 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                             </div>
                         </div>
                     ))}
+                </div>
+            </div>
+
+            {/* Manage Co-Commissioners */}
+            <div className="bg-emerald-900 p-6 rounded-lg shadow-lg border-2 border-emerald-700 mt-6">
+                <h3 className="text-2xl font-bold text-purple-400 mb-2">Manage Co-Commissioners</h3>
+                <p className="text-sm text-emerald-300 mb-4">
+                    Grant commissioner tools access to other managers. The primary commissioner always retains full control.
+                    {!isPrimaryCommissioner(currentLeague, userId) && (
+                        <span className="block mt-1 text-yellow-400">Only the primary commissioner can grant or revoke access.</span>
+                    )}
+                </p>
+                <div className="space-y-3">
+                    {teamsData
+                        .filter((team) => team.ownerId && team.ownerId !== currentLeague?.commissionerId)
+                        .map((team) => {
+                            const hasAccess = Array.isArray(currentLeague?.coCommissioners)
+                                && currentLeague.coCommissioners.includes(team.ownerId);
+                            const canManage = isPrimaryCommissioner(currentLeague, userId);
+
+                            return (
+                                <div
+                                    key={team.id}
+                                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-emerald-800 p-4 rounded-lg border border-emerald-600"
+                                >
+                                    <div>
+                                        <p className="text-white font-semibold">{team.teamName}</p>
+                                        <p className="text-emerald-300 text-sm">Owner: {team.ownerId}</p>
+                                        <p className={`text-xs mt-1 ${hasAccess ? 'text-green-400' : 'text-yellow-400'}`}>
+                                            {hasAccess ? 'Co-commissioner' : 'Manager only'}
+                                        </p>
+                                    </div>
+                                    {hasAccess ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleRevokeCoCommissioner(team.ownerId)}
+                                            disabled={isLoading || !canManage}
+                                            className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50 transition-colors font-semibold"
+                                        >
+                                            Revoke Access
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleGrantCoCommissioner(team.ownerId)}
+                                            disabled={isLoading || !canManage}
+                                            className="px-6 py-2 bg-purple-800 hover:bg-purple-900 text-white rounded-md disabled:opacity-50 transition-colors font-semibold"
+                                        >
+                                            Grant Access
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    {teamsData.filter((team) => team.ownerId && team.ownerId !== currentLeague?.commissionerId).length === 0 && (
+                        <p className="text-emerald-400">No other team owners in this league yet.</p>
+                    )}
                 </div>
             </div>
 

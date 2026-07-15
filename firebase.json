@@ -40,16 +40,7 @@
         ]
       },
       {
-        "source": "**/*.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "public, max-age=31536000"
-          }
-        ]
-      },
-      {
-        "source": "**/*.css",
+        "source": "**/*.@(js|css|png|jpg|jpeg|svg)",
         "headers": [
           {
             "key": "Cache-Control",

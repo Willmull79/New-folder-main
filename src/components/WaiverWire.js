@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
-import { isFaabWaiver } from '../constants/leagueDefaults.js';
+import { isFaabWaiver, isLeagueCommissioner } from '../constants/leagueDefaults.js';
 
 // Import firebase globally (it's loaded in the HTML)
 const firebase = window.firebase;
@@ -337,7 +337,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                             const player = getPlayerDetails(claim.playerId, allPlayers);
                             const expiration = claim.expiration?.toDate();
                             const isExpired = expiration && new Date() > expiration;
-                            const isCommissioner = currentLeague?.commissionerId === currentTeam?.ownerId;
+                            const isCommissioner = isLeagueCommissioner(currentLeague, currentTeam?.ownerId);
                             
                             return (
                                 <div key={claim.id} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
@@ -385,7 +385,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
 
     const renderPriorityWaivers = () => {
         const activeClaims = waiverClaims.filter((claim) => claim.status === 'active');
-        const isCommissioner = currentLeague?.commissionerId === currentTeam?.ownerId;
+        const isCommissioner = isLeagueCommissioner(currentLeague, currentTeam?.ownerId);
 
         return (
             <div className="space-y-6">

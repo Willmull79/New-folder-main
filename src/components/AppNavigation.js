@@ -8,6 +8,12 @@ const LEAGUE_TABS = [
     { id: 'trade', label: 'Trade', shortLabel: 'Trade' },
     { id: 'standings', label: 'Standings', shortLabel: 'Standings' },
     { id: 'live-scores', label: 'Live Scores', shortLabel: 'Scores' },
+    { id: 'account-settings', label: 'Account Settings', shortLabel: 'Account' },
+];
+
+const ALWAYS_TABS = [
+    { id: 'leagues', label: 'Select League', shortLabel: 'Leagues' },
+    { id: 'account-settings', label: 'Account Settings', shortLabel: 'Account' },
 ];
 
 const tabButtonClass = (isActive) => (
@@ -32,7 +38,7 @@ export const AppNavigation = ({ activeTab, setActiveTab, showLeagueTabs, isCommi
             ...LEAGUE_TABS,
             ...(isCommissioner ? [{ id: 'commissioner', label: 'Commissioner', shortLabel: 'Commish' }] : []),
         ]
-        : [{ id: 'leagues', label: 'Select League', shortLabel: 'Leagues' }];
+        : ALWAYS_TABS;
 
     return (
         <>

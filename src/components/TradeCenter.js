@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails } from '../utils/helpers.js';
-import { isTeamSalaryCapEnabled, isPlayerSalaryEnabled } from '../constants/leagueDefaults.js';
+import { isTeamSalaryCapEnabled, isPlayerSalaryEnabled, isLeagueCommissioner } from '../constants/leagueDefaults.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
 
 // Import firebase globally (it's loaded in the HTML)
@@ -63,13 +63,13 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             });
 
         // Check if current user is commissioner
-        setIsCommissioner(currentLeague?.commissionerId === currentTeam?.ownerId);
+        setIsCommissioner(isLeagueCommissioner(currentLeague, currentTeam?.ownerId));
 
         return () => {
             teamsUnsubscribe();
             tradesUnsubscribe();
         };
-    }, [db, currentLeague?.id, currentLeague?.commissionerId, currentTeam?.ownerId]);
+    }, [db, currentLeague, currentTeam?.ownerId]);
 
     const initializeTradeOffer = (teamId) => {
         return {
