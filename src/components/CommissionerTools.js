@@ -57,7 +57,7 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
     const [waiverType, setWaiverType] = useState(currentLeague?.settings?.waiverType || 'auction');
 
     const joinLink = currentLeague?.id
-        ? `${window.location.origin}?joinLeague=${currentLeague.id}`
+        ? `${window.location.origin}/?joinLeague=${encodeURIComponent(currentLeague.id)}`
         : '';
 
     const handleShareInvite = async () => {
@@ -69,7 +69,7 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
             try {
                 await navigator.share({
                     title: 'Join my Fantasy League',
-                    text: 'You have been invited to join my Fantasy Football League!',
+                    text: `You have been invited to join my Fantasy Football League!\n\nJoin here: ${joinLink}`,
                     url: joinLink,
                 });
                 return;

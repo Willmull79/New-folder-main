@@ -27,8 +27,9 @@ const friendlyAuthError = (error) => {
     }
 };
 
-export const AuthScreen = ({ showMessage }) => {
+export const AuthScreen = ({ showMessage, hasPendingInvite = false, onAuthSuccess }) => {
     const { auth, db, isFirebaseReady, firebaseError, refreshAuthState } = useFirebase();
+    // Invitees still land on Login; they can switch to Register from the form.
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -98,6 +99,7 @@ export const AuthScreen = ({ showMessage }) => {
             }
 
             displayMessage(isLogin ? 'Logged in successfully!' : 'Registered successfully!', 'success');
+            onAuthSuccess?.();
         } catch (error) {
             console.error('Auth error:', error);
             displayMessage(friendlyAuthError(error), 'error');
@@ -134,9 +136,15 @@ export const AuthScreen = ({ showMessage }) => {
         <div className="flex items-center justify-center min-h-screen min-h-[100dvh] bg-gray-900 p-4 mobile-safe-top mobile-safe-bottom">
             <div className="bg-gray-800 p-6 sm:p-8 rounded-lg shadow-xl w-full max-w-md">
                 <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2 text-center">{isLogin ? 'Login' : 'Register'}</h2>
-                <p className="text-gray-400 text-sm text-center mb-6">
+                <p className="text-gray-400 text-sm text-center mb-4">
                     {isFirebaseReady ? 'Sign in to manage your dynasty leagues' : 'Connecting to Firebase...'}
                 </p>
+
+                {hasPendingInvite && (
+                    <div className="mb-4 p-3 rounded-md text-sm bg-emerald-900/50 text-emerald-100 border border-emerald-600 text-center">
+                        Sign up or log in to accept your league invitation!
+                    </div>
+                )}
 
                 {firebaseError && (
                     <div className="mb-4 p-3 rounded-md text-sm bg-red-900/50 text-red-200 border border-red-700">

@@ -53,7 +53,7 @@ const getProviderFlags = (user) => {
     };
 };
 
-export const AccountSettings = ({ showMessage }) => {
+export const AccountSettings = ({ showMessage, embedded = false }) => {
     const { auth, db, userId } = useFirebase();
     const [providerInfo, setProviderInfo] = useState(() => getProviderFlags(auth?.currentUser));
 
@@ -229,14 +229,16 @@ export const AccountSettings = ({ showMessage }) => {
     const buttonClass =
         'mt-4 w-full sm:w-auto px-6 py-3 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md disabled:opacity-50 transition-colors';
 
-    return (
-        <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-xl mx-auto my-2 sm:my-8 text-white">
-            <h2 className="text-3xl font-bold text-white mb-2">Account Settings</h2>
-            <p className="text-emerald-300 mb-8">
-                Link additional sign-in methods to this same profile so you can log in with email or phone.
-            </p>
-
-            <div className="bg-emerald-900 p-6 rounded-lg border border-emerald-700 space-y-8">
+    const content = (
+            <div className={embedded ? 'space-y-8' : 'bg-emerald-900 p-6 rounded-lg border border-emerald-700 space-y-8'}>
+                {!embedded && (
+                    <div className="mb-2">
+                        <h2 className="text-3xl font-bold text-white mb-2">Account Settings</h2>
+                        <p className="text-emerald-300">
+                            Link additional sign-in methods to this same profile so you can log in with email or phone.
+                        </p>
+                    </div>
+                )}
                 <div>
                     <h3 className="text-lg font-semibold text-purple-300 mb-3">Linked Sign-In Methods</h3>
                     <ul className="space-y-2 text-sm text-emerald-200">
@@ -348,6 +350,15 @@ export const AccountSettings = ({ showMessage }) => {
                     </p>
                 )}
             </div>
+    );
+
+    if (embedded) {
+        return content;
+    }
+
+    return (
+        <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-xl mx-auto my-2 sm:my-8 text-white">
+            {content}
         </div>
     );
 };

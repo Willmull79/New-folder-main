@@ -8,7 +8,7 @@ import { isFaabWaiver, isLeagueCommissioner } from '../constants/leagueDefaults.
 const firebase = window.firebase;
 
 export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage, currentTeamId }) => {
-    const { db } = useFirebase();
+    const { db, userId } = useFirebase();
     const [waiverClaims, setWaiverClaims] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [selectedPlayer, setSelectedPlayer] = useState('');
@@ -61,15 +61,15 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         return a.wins - b.wins;
     });
 
-    const handlePlaceWaiverBid = async () => {
+    const handlePlaceBid = async () => {
         if (!isAuctionComplete) {
             return showMessage("You cannot add free agents until the auction is complete.", "error");
         }
-        
+
         if (!selectedPlayer) {
             return showMessage("Please select a player.", "error");
         }
-        
+
         if (bidAmount <= 0) {
             return showMessage("Bid must be greater than zero.", "error");
         }
@@ -77,28 +77,57 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         setIsLoading(true);
         try {
             const waiverRef = db.collection(`leagues/${currentLeague.id}/waivers`).doc(selectedPlayer);
-            
-            // Check if player is already on waiver wire
             const waiverDoc = await waiverRef.get();
-            if (waiverDoc.exists) {
-                return showMessage("This player is already on the waiver wire.", "error");
+            const existingClaim = waiverDoc.exists ? waiverDoc.data() : null;
+            const highestBid = Number(existingClaim?.highestBid) || 0;
+
+            if (existingClaim && existingClaim.status === 'active' && Number(bidAmount) <= highestBid) {
+                return showMessage(`Your bid must be higher than the current high bid of $${highestBid}.`, "error");
             }
 
-            const expiration = new Date();
-            expiration.setHours(expiration.getHours() + 24);
+            // Salary cap validation
+            const userTeam = teamsData.find((t) => t.ownerId === userId)
+                || teamsData.find((t) => t.id === currentTeamId)
+                || currentTeam;
+            const roster = userTeam?.roster || {};
+            const rosterPlayerIds = [
+                ...Object.values(roster.lineup || {}),
+                ...(roster.bench || []),
+                ...(roster.ir || []),
+            ].filter(Boolean);
+            const currentSalary = rosterPlayerIds.reduce((sum, pId) => {
+                const player = allPlayers.find((p) => p.id === pId);
+                return sum + (Number(player?.salary) || 0);
+            }, 0);
+            const teamSalaryCap = Number(currentLeague?.settings?.teamSalary) || 0;
+            if (currentSalary + Number(bidAmount) > teamSalaryCap) {
+                const remaining = teamSalaryCap - currentSalary;
+                return showMessage(`Bid would exceed salary cap. You have $${remaining} remaining.`, "error");
+            }
 
-            await waiverRef.set({
-                playerId: selectedPlayer,
-                waiverType: 'auction',
-                bids: {
-                    [currentTeamId]: Number(bidAmount)
-                },
-                highestBid: Number(bidAmount),
-                highestBidder: currentTeamId,
-                expiration: firebase.firestore.Timestamp.fromDate(expiration),
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                status: 'active'
-            });
+            if (existingClaim && existingClaim.status === 'active') {
+                await waiverRef.update({
+                    [`bids.${currentTeamId}`]: Number(bidAmount),
+                    highestBid: Number(bidAmount),
+                    highestBidder: currentTeamId,
+                });
+            } else {
+                const expiration = new Date();
+                expiration.setHours(expiration.getHours() + 24);
+
+                await waiverRef.set({
+                    playerId: selectedPlayer,
+                    waiverType: 'auction',
+                    bids: {
+                        [currentTeamId]: Number(bidAmount)
+                    },
+                    highestBid: Number(bidAmount),
+                    highestBidder: currentTeamId,
+                    expiration: firebase.firestore.Timestamp.fromDate(expiration),
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    status: 'active'
+                });
+            }
 
             showMessage(`Waiver bid placed on ${getPlayerDetails(selectedPlayer, allPlayers).name}!`, "success");
             setSelectedPlayer('');
@@ -307,7 +336,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                     </div>
                 </div>
                 <button 
-                    onClick={handlePlaceWaiverBid} 
+                    onClick={handlePlaceBid} 
                     disabled={isLoading || !selectedPlayer || bidAmount <= 0 || !isAuctionComplete}
                     className="mt-4 px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-md disabled:opacity-50 transition-colors shadow-lg"
                 >

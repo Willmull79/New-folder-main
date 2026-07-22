@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
+import { AccountSettings } from './AccountSettings.js';
 import { appId } from '../config/firebase.js';
 
 export const AccountProfile = ({ showMessage }) => {
@@ -52,9 +53,11 @@ export const AccountProfile = ({ showMessage }) => {
     const profilePath = `artifacts/${appId}/users/${userId}/userProfile/settings`;
 
     return (
-        <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-xl mx-auto my-2 sm:my-8 text-white">
-            <h2 className="text-3xl font-bold text-white mb-2">Account Profile</h2>
-            <p className="text-emerald-300 mb-8">Update your username and profile picture.</p>
+        <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-xl mx-auto my-2 sm:my-8 text-white space-y-6">
+            <div>
+                <h2 className="text-3xl font-bold text-white mb-2">Profile Settings</h2>
+                <p className="text-emerald-300">Update your profile, username, and sign-in methods.</p>
+            </div>
 
             <div className="bg-emerald-900 p-6 rounded-lg border border-emerald-700 space-y-8">
                 <div className="flex flex-col items-center gap-4">
@@ -95,6 +98,14 @@ export const AccountProfile = ({ showMessage }) => {
                         {isSaving ? 'Saving...' : 'Save Username'}
                     </button>
                 </div>
+            </div>
+
+            <div className="bg-emerald-900 p-6 rounded-lg border border-emerald-700">
+                <h3 className="text-xl font-bold text-purple-300 mb-2">Account Settings</h3>
+                <p className="text-sm text-emerald-400 mb-6">
+                    Link additional sign-in methods so you can log in with email or phone.
+                </p>
+                <AccountSettings showMessage={showMessage} embedded />
             </div>
         </div>
     );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useFirebase } from './contexts/FirebaseContext.js';
 import { AuthScreen } from './components/AuthScreen.js';
 import { LeagueSelector } from './components/LeagueSelector.js';
@@ -13,6 +13,18 @@ import draftService from './utils/draftService.js';
 import { appId } from './config/firebase.js';
 import { isOnActiveNflRoster } from './utils/helpers.js';
 import { isLeagueCommissioner } from './constants/leagueDefaults.js';
+import {
+    capturePendingInviteFromUrl,
+    clearAllInviteState,
+    clearInviteLoginGate,
+    getPendingInviteLeagueId,
+    hasPendingInvite,
+    inviteRequiresLogin,
+    joinLeagueAsUser,
+} from './utils/leagueInvite.js';
+
+// Capture invite before first paint / auth routing
+capturePendingInviteFromUrl();
 
 // Lazy load components to reduce initial bundle size
 const Roster = React.lazy(() => import('./components/Roster.js').then(module => ({ default: module.Roster })));
@@ -23,7 +35,6 @@ const Standings = React.lazy(() => import('./components/Standings.js'));
 const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
 const AccountProfile = React.lazy(() => import('./components/AccountProfile.js'));
-const AccountSettings = React.lazy(() => import('./components/AccountSettings.js'));
 
 // Loading component for lazy-loaded components
 const LoadingSpinner = () => (
@@ -44,40 +55,124 @@ const App = () => {
     const [teamsData, setTeamsData] = useState([]);
     const [allPlayers, setAllPlayers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [pendingJoinLeagueId, setPendingJoinLeagueId] = useState(null);
+    const [isProcessingInvite, setIsProcessingInvite] = useState(false);
+    const [inviteLoginGate, setInviteLoginGate] = useState(false);
+    const [isClearingInviteSession, setIsClearingInviteSession] = useState(false);
+    const inviteProcessedRef = useRef(false);
+    const inviteSignOutStartedRef = useRef(false);
 
     const isLoadingData = (currentLeagueId && !currentLeague) || (currentTeamId && !currentTeam);
     const isCommissioner = isLeagueCommissioner(currentLeague, userId);
 
-    // Capture ?joinLeague= invite links (works after login because param stays in the URL)
-    useEffect(() => {
-        if (!userId) return;
+    const showMessage = (msg, type = 'success') => {
+        setMessage(msg);
+        setMessageType(type);
+        setTimeout(() => { setMessage(''); setMessageType(''); }, 4000);
+    };
 
-        const params = new URLSearchParams(window.location.search);
-        const joinId = (params.get('joinLeague') || '').trim();
-        if (!joinId) return;
-
-        setPendingJoinLeagueId(joinId);
-        setActiveTab('leagues');
+    const handleLeagueSelected = (leagueId, teamId) => {
+        setCurrentLeagueId(leagueId);
+        setCurrentTeamId(teamId);
+        setActiveTab('roster');
+    };
+    
+    const handleLeaveLeague = () => {
         setCurrentLeagueId(null);
         setCurrentTeamId(null);
         setCurrentLeague(null);
         setCurrentTeam(null);
+        setActiveTab('leagues');
+    };
+
+    // Re-capture invite on mount; pause league UI until invite is resolved
+    useEffect(() => {
+        const captured = capturePendingInviteFromUrl();
+        if (captured || hasPendingInvite() || inviteRequiresLogin()) {
+            inviteProcessedRef.current = false;
+            inviteSignOutStartedRef.current = false;
+            setCurrentLeagueId(null);
+            setCurrentTeamId(null);
+            setCurrentLeague(null);
+            setCurrentTeam(null);
+            setActiveTab('leagues');
+        }
+    }, []);
+
+    // Logged-out invitees → AuthScreen. Already logged-in users keep their session and process the invite.
+    useEffect(() => {
+        if (!isAuthReady) return undefined;
+        if (!hasPendingInvite() && !inviteRequiresLogin()) return undefined;
+
+        if (!auth?.currentUser) {
+            setInviteLoginGate(true);
+            return undefined;
+        }
+
+        // Already authenticated — do not force logout / re-login for invite links
+        clearInviteLoginGate();
+        setInviteLoginGate(false);
+        setIsClearingInviteSession(false);
+        return undefined;
+    }, [isAuthReady, auth, userId]);
+
+    // After auth succeeds, reset invite processing for this session when user logs back in with a new invite
+    useEffect(() => {
+        if (!userId) {
+            inviteProcessedRef.current = false;
+        }
     }, [userId]);
 
-    const clearJoinInviteFromUrl = () => {
-        setPendingJoinLeagueId(null);
-        try {
-            const url = new URL(window.location.href);
-            if (url.searchParams.has('joinLeague')) {
-                url.searchParams.delete('joinLeague');
-                const next = `${url.pathname}${url.search}${url.hash}`;
-                window.history.replaceState({}, '', next);
+    // Process pending invite once authenticated: existing members → dashboard; newcomers → join then dashboard
+    useEffect(() => {
+        if (!isAuthReady || !userId || !db || !auth?.currentUser) return undefined;
+        if (inviteLoginGate || isClearingInviteSession) return undefined;
+        if (inviteProcessedRef.current) return undefined;
+
+        const pendingId = getPendingInviteLeagueId();
+        if (!pendingId) return undefined;
+
+        let cancelled = false;
+        inviteProcessedRef.current = true;
+        setIsProcessingInvite(true);
+
+        const processInvite = async () => {
+            try {
+                const result = await joinLeagueAsUser({
+                    db,
+                    leagueId: pendingId,
+                    userId,
+                    userDisplayName,
+                });
+                if (cancelled) return;
+
+                // Always clear pending invite before routing
+                clearAllInviteState();
+                handleLeagueSelected(result.leagueId, result.teamId);
+
+                if (result.alreadyMember) {
+                    showMessage('You are already in this league!', 'success');
+                } else {
+                    showMessage(`Successfully joined "${result.leagueName}"!`, 'success');
+                }
+            } catch (error) {
+                console.error('Error processing league invite:', error);
+                if (!cancelled) {
+                    clearAllInviteState();
+                    showMessage(error?.message || 'Could not join the invited league.', 'error');
+                    setActiveTab('leagues');
+                }
+            } finally {
+                if (!cancelled) {
+                    setIsProcessingInvite(false);
+                }
             }
-        } catch (error) {
-            console.warn('Could not clear joinLeague URL param:', error);
-        }
-    };
+        };
+
+        processInvite();
+        return () => {
+            cancelled = true;
+        };
+    }, [isAuthReady, userId, db, userDisplayName, auth, inviteLoginGate, isClearingInviteSession]);
 
     useEffect(() => {
         if (!db || !currentLeague?.teams) {
@@ -99,26 +194,6 @@ const App = () => {
         return () => unsubscribes.forEach(unsub => unsub());
 
     }, [db, currentLeague]);
-
-    const showMessage = (msg, type = 'success') => {
-        setMessage(msg);
-        setMessageType(type);
-        setTimeout(() => { setMessage(''); setMessageType(''); }, 4000);
-    };
-
-    const handleLeagueSelected = (leagueId, teamId) => {
-        setCurrentLeagueId(leagueId);
-        setCurrentTeamId(teamId);
-        setActiveTab('roster');
-    };
-    
-    const handleLeaveLeague = () => {
-        setCurrentLeagueId(null);
-        setCurrentTeamId(null);
-        setCurrentLeague(null);
-        setCurrentTeam(null);
-        setActiveTab('leagues');
-    };
 
     useEffect(() => {
         if (!db || !currentLeagueId) {
@@ -236,8 +311,28 @@ const App = () => {
         );
     }
 
-    if (!userId) {
-        return <AuthScreen showMessage={showMessage} />;
+    // Invitees who are not logged in must register / log in first
+    if (!userId || !auth?.currentUser || inviteLoginGate) {
+        return (
+            <AuthScreen
+                showMessage={showMessage}
+                hasPendingInvite={hasPendingInvite() || inviteLoginGate}
+                onAuthSuccess={() => {
+                    clearInviteLoginGate();
+                    setInviteLoginGate(false);
+                    inviteSignOutStartedRef.current = false;
+                }}
+            />
+        );
+    }
+
+    if (isProcessingInvite) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+                <p className="text-gray-400">Joining your invited league...</p>
+            </div>
+        );
     }
     
     return (
@@ -313,18 +408,11 @@ const App = () => {
                                 showMessage={showMessage}
                                 userDisplayName={userDisplayName}
                                 onLeagueSelected={handleLeagueSelected}
-                                pendingJoinLeagueId={pendingJoinLeagueId}
-                                onJoinInviteHandled={clearJoinInviteFromUrl}
                             />
                         )}
                         {activeTab === 'profile' && (
                             <Suspense fallback={<LoadingSpinner />}>
                                 <AccountProfile showMessage={showMessage} />
-                            </Suspense>
-                        )}
-                        {activeTab === 'account-settings' && (
-                            <Suspense fallback={<LoadingSpinner />}>
-                                <AccountSettings showMessage={showMessage} />
                             </Suspense>
                         )}
                         <Suspense fallback={<LoadingSpinner />}>

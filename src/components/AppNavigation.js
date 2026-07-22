@@ -8,12 +8,10 @@ const LEAGUE_TABS = [
     { id: 'trade', label: 'Trade', shortLabel: 'Trade' },
     { id: 'standings', label: 'Standings', shortLabel: 'Standings' },
     { id: 'live-scores', label: 'Live Scores', shortLabel: 'Scores' },
-    { id: 'account-settings', label: 'Account Settings', shortLabel: 'Account' },
 ];
 
 const ALWAYS_TABS = [
     { id: 'leagues', label: 'Select League', shortLabel: 'Leagues' },
-    { id: 'account-settings', label: 'Account Settings', shortLabel: 'Account' },
 ];
 
 const tabButtonClass = (isActive) => (
