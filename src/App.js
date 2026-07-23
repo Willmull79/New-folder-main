@@ -485,6 +485,7 @@ const App = () => {
                                 <CommissionerTools
                                     currentLeague={currentLeague}
                                     currentTeam={currentTeam}
+                                    allPlayers={allPlayers}
                                     showMessage={showMessage}
                                     onLeagueUpdate={(updatedLeague) => {
                                         if (updatedLeague?.id) {

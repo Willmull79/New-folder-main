@@ -1,10 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails } from '../utils/helpers.js';
-import { isTeamSalaryCapEnabled, isPlayerSalaryEnabled, isLeagueCommissioner } from '../constants/leagueDefaults.js';
+import {
+    isTeamSalaryCapEnabled,
+    isPlayerSalaryEnabled,
+} from '../constants/leagueDefaults.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
+import {
+    cloneRoster,
+    findPlayerLocation,
+    getTradeParties,
+    placePlayerInOpenSlot,
+    removePlayerFromRoster,
+} from '../utils/tradeRosterUtils.js';
 
-// Import firebase globally (it's loaded in the HTML)
 const firebase = window.firebase;
 
 const getLineupPlayerIds = (lineup) => {
@@ -22,70 +31,61 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
     const [teamsData, setTeamsData] = useState([]);
     const [pendingTrades, setPendingTrades] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [activeTrade, setActiveTrade] = useState(null);
     const [selectedTeams, setSelectedTeams] = useState([]);
     const [tradeOffers, setTradeOffers] = useState({});
     const [teamToAdd, setTeamToAdd] = useState('');
-    const [isCommissioner, setIsCommissioner] = useState(false);
     const leagueSettings = currentLeague?.settings || {};
     const salaryRulesEnabled = isTeamSalaryCapEnabled(leagueSettings) && isPlayerSalaryEnabled(leagueSettings);
 
-    // Initialize selected teams when currentTeamId is available
     useEffect(() => {
         if (currentTeamId && selectedTeams.length === 0) {
             setSelectedTeams([currentTeamId]);
             setTradeOffers({
-                [currentTeamId]: initializeTradeOffer(currentTeamId)
+                [currentTeamId]: initializeTradeOffer(),
             });
         }
     }, [currentTeamId, selectedTeams.length]);
 
     useEffect(() => {
-        if (!db || !currentLeague?.id) return;
+        if (!db || !currentLeague?.id) return undefined;
 
-        // Listen to teams in the league subcollection
         const teamsUnsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
-            .onSnapshot(snapshot => {
-                const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            .onSnapshot((snapshot) => {
+                const teams = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
                 setTeamsData(teams);
-            }, error => {
-                console.error("Error listening to teams:", error);
+            }, (error) => {
+                console.error('Error listening to teams:', error);
             });
 
-        // Listen to pending trades
         const tradesUnsubscribe = db.collection(`leagues/${currentLeague.id}/trades`)
             .where('status', '==', 'pending')
-            .onSnapshot(snapshot => {
-                const trades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            .onSnapshot((snapshot) => {
+                const trades = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
                 setPendingTrades(trades);
-            }, error => {
-                console.error("Error listening to trades:", error);
+            }, (error) => {
+                console.error('Error listening to trades:', error);
             });
-
-        // Check if current user is commissioner
-        setIsCommissioner(isLeagueCommissioner(currentLeague, currentTeam?.ownerId));
 
         return () => {
             teamsUnsubscribe();
             tradesUnsubscribe();
         };
-    }, [db, currentLeague, currentTeam?.ownerId]);
+    }, [db, currentLeague?.id]);
 
-    const initializeTradeOffer = (teamId) => {
-        return {
-            players: [],
-            draftPicks: [],
-            salaryCap: 0
-        };
-    };
+    const initializeTradeOffer = () => ({
+        players: [],
+        draftPicks: [],
+        salaryCap: 0,
+    });
 
     const addTeamToTrade = (teamId) => {
-        if (!teamId || selectedTeams.length >= 3 || selectedTeams.includes(teamId)) return;
+        // One-on-one trades only: sender (you) + one receiver
+        if (!teamId || selectedTeams.length >= 2 || selectedTeams.includes(teamId)) return;
 
         setSelectedTeams([...selectedTeams, teamId]);
         setTradeOffers({
             ...tradeOffers,
-            [teamId]: initializeTradeOffer(teamId)
+            [teamId]: initializeTradeOffer(),
         });
         setTeamToAdd('');
     };
@@ -94,7 +94,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
     const removeTeamFromTrade = (teamId) => {
         if (selectedTeams.length > 1 && teamId !== currentTeamId) {
-            setSelectedTeams(selectedTeams.filter(id => id !== teamId));
+            setSelectedTeams(selectedTeams.filter((id) => id !== teamId));
             const newOffers = { ...tradeOffers };
             delete newOffers[teamId];
             setTradeOffers(newOffers);
@@ -105,7 +105,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         const player = getPlayerDetails(playerId, allPlayers);
         if (!player) return;
 
-        setTradeOffers(prev => ({
+        setTradeOffers((prev) => ({
             ...prev,
             [teamId]: {
                 ...prev[teamId],
@@ -115,78 +115,74 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                     position: player.position,
                     nflTeam: player.nflTeam,
                     salary: player.salary,
-                    rosterType: rosterType
+                    rosterType,
                 }],
-                salaryCap: (prev[teamId]?.salaryCap || 0) + (player.salary || 0)
-            }
+                salaryCap: (prev[teamId]?.salaryCap || 0) + (player.salary || 0),
+            },
         }));
     };
 
     const removePlayerFromTrade = (teamId, playerIndex) => {
-        setTradeOffers(prev => {
+        setTradeOffers((prev) => {
             const player = prev[teamId]?.players[playerIndex];
             return {
                 ...prev,
                 [teamId]: {
                     ...prev[teamId],
                     players: prev[teamId].players.filter((_, index) => index !== playerIndex),
-                    salaryCap: (prev[teamId]?.salaryCap || 0) - (player?.salary || 0)
-                }
+                    salaryCap: (prev[teamId]?.salaryCap || 0) - (player?.salary || 0),
+                },
             };
         });
     };
 
     const addDraftPick = (teamId, round, year = new Date().getFullYear()) => {
-        setTradeOffers(prev => ({
+        setTradeOffers((prev) => ({
             ...prev,
             [teamId]: {
                 ...prev[teamId],
-                draftPicks: [...(prev[teamId]?.draftPicks || []), { round, year }]
-            }
+                draftPicks: [...(prev[teamId]?.draftPicks || []), { round, year }],
+            },
         }));
     };
 
     const removeDraftPick = (teamId, pickIndex) => {
-        setTradeOffers(prev => ({
+        setTradeOffers((prev) => ({
             ...prev,
             [teamId]: {
                 ...prev[teamId],
-                draftPicks: prev[teamId].draftPicks.filter((_, index) => index !== pickIndex)
-            }
+                draftPicks: prev[teamId].draftPicks.filter((_, index) => index !== pickIndex),
+            },
         }));
     };
 
     const getTeamRoster = (teamId) => {
-        const team = teamsData.find(t => t.id === teamId);
+        const team = teamsData.find((t) => t.id === teamId);
         const roster = team?.roster || {};
         return {
             lineup: getLineupPlayerIds(roster.lineup),
             bench: Array.isArray(roster.bench) ? roster.bench.filter(Boolean) : [],
-            ir: Array.isArray(roster.ir) ? roster.ir.filter(Boolean) : []
+            ir: Array.isArray(roster.ir) ? roster.ir.filter(Boolean) : [],
         };
     };
 
     const validateTrade = () => {
-        // Check if at least 2 teams are involved
-        if (selectedTeams.length < 2) {
-            return { valid: false, message: "At least 2 teams must be involved in a trade." };
+        if (selectedTeams.length !== 2) {
+            return { valid: false, message: 'Select exactly one other team for a one-on-one trade.' };
         }
 
-        // Check if each team has something to offer
         for (const teamId of selectedTeams) {
             const offer = tradeOffers[teamId];
             if (!offer || (!offer.players.length && !offer.draftPicks.length)) {
-                const team = teamsData.find(t => t.id === teamId);
+                const team = teamsData.find((t) => t.id === teamId);
                 return { valid: false, message: `${team?.teamName} has nothing to offer in this trade.` };
             }
         }
 
-        // Check salary cap compliance for each team
         if (salaryRulesEnabled) {
             for (const teamId of selectedTeams) {
-                const team = teamsData.find(t => t.id === teamId);
+                const team = teamsData.find((t) => t.id === teamId);
                 const offer = tradeOffers[teamId];
-
                 if (!team || !offer) continue;
 
                 const currentSalary = getLineupPlayerIds(team.roster?.lineup).reduce((sum, playerId) => {
@@ -195,15 +191,15 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                 }, 0);
 
                 const outgoingSalary = offer.players
-                    .filter(p => p.rosterType === 'lineup')
+                    .filter((p) => p.rosterType === 'lineup')
                     .reduce((sum, p) => sum + (p.salary || 0), 0);
 
                 const incomingSalary = selectedTeams
-                    .filter(otherTeamId => otherTeamId !== teamId)
+                    .filter((otherTeamId) => otherTeamId !== teamId)
                     .reduce((sum, otherTeamId) => {
                         const otherOffer = tradeOffers[otherTeamId];
                         return sum + (otherOffer?.players
-                            .filter(p => p.rosterType === 'lineup')
+                            .filter((p) => p.rosterType === 'lineup')
                             .reduce((s, p) => s + (p.salary || 0), 0) || 0);
                     }, 0);
 
@@ -216,138 +212,190 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             }
         }
 
-        return { valid: true, message: "Trade is valid!" };
+        return { valid: true, message: 'Trade is valid!' };
     };
 
     const proposeTrade = async () => {
         const validation = validateTrade();
         if (!validation.valid) {
-            return showMessage(validation.message, "error");
+            return showMessage(validation.message, 'error');
+        }
+
+        const receiverTeamId = selectedTeams.find((id) => id !== currentTeamId);
+        if (!receiverTeamId) {
+            return showMessage('Select a receiving team.', 'error');
         }
 
         setIsLoading(true);
         try {
             const tradeData = {
                 teams: selectedTeams,
+                senderTeamId: currentTeamId,
+                receiverTeamId,
                 offers: tradeOffers,
                 proposedBy: currentTeamId,
                 status: 'pending',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                responses: selectedTeams.reduce((acc, teamId) => {
-                    acc[teamId] = teamId === currentTeamId ? 'accepted' : 'pending';
-                    return acc;
-                }, {})
             };
 
             await db.collection(`leagues/${currentLeague.id}/trades`).add(tradeData);
 
-            showMessage("Trade proposal sent successfully!", "success");
-            setActiveTrade(null);
+            showMessage('Trade proposal sent successfully!', 'success');
             setSelectedTeams([currentTeamId]);
-            setTradeOffers({});
+            setTradeOffers({ [currentTeamId]: initializeTradeOffer() });
             setTeamToAdd('');
         } catch (error) {
-            console.error("Error proposing trade:", error);
-            showMessage("Error proposing trade.", "error");
+            console.error('Error proposing trade:', error);
+            showMessage('Error proposing trade.', 'error');
         } finally {
             setIsLoading(false);
         }
     };
 
-    const respondToTrade = async (tradeId, response) => {
+    const cancelTrade = async (tradeId) => {
         setIsLoading(true);
         try {
-            const tradeRef = db.doc(`leagues/${currentLeague.id}/trades/${tradeId}`);
-            await tradeRef.update({
-                [`responses.${currentTeamId}`]: response
+            await db.doc(`leagues/${currentLeague.id}/trades/${tradeId}`).update({
+                status: 'cancelled',
+                resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
-
-            if (response === 'accepted') {
-                showMessage("Trade accepted!", "success");
-            } else {
-                showMessage("Trade declined.", "info");
-            }
+            showMessage('Trade cancelled.', 'success');
         } catch (error) {
-            console.error("Error responding to trade:", error);
-            showMessage("Error responding to trade.", "error");
+            console.error('Error cancelling trade:', error);
+            showMessage(error?.message || 'Failed to cancel trade.', 'error');
         } finally {
             setIsLoading(false);
         }
     };
 
-    const executeTrade = async (tradeId) => {
-        if (!isCommissioner) {
-            return showMessage("Only commissioners can execute trades.", "error");
+    const rejectTrade = async (tradeId) => {
+        setIsLoading(true);
+        try {
+            await db.doc(`leagues/${currentLeague.id}/trades/${tradeId}`).update({
+                status: 'rejected',
+                resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
+            showMessage('Trade rejected.', 'success');
+        } catch (error) {
+            console.error('Error rejecting trade:', error);
+            showMessage(error?.message || 'Failed to reject trade.', 'error');
+        } finally {
+            setIsLoading(false);
         }
+    };
+
+    /**
+     * Accept trade inside a Firestore transaction:
+     * - remove outgoing players from positional slots
+     * - place incoming players into open positional slots (abort if none fit)
+     */
+    const acceptTrade = async (tradeId) => {
+        if (!db || !currentLeague?.id) return;
 
         setIsLoading(true);
         try {
             const tradeRef = db.doc(`leagues/${currentLeague.id}/trades/${tradeId}`);
-            const tradeDoc = await tradeRef.get();
-            const trade = tradeDoc.data();
 
-            // Check if all teams have accepted
-            const allAccepted = trade.teams.every(teamId => trade.responses[teamId] === 'accepted');
-            if (!allAccepted) {
-                return showMessage("All teams must accept before executing trade.", "error");
-            }
-
-            const batch = db.batch();
-
-            // Execute the trade for each team
-            for (const teamId of trade.teams) {
-                const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${teamId}`);
-                const team = teamsData.find(t => t.id === teamId);
-
-                if (!team) continue;
-
-                const newRoster = {
-                    lineup: team.roster?.lineup && typeof team.roster.lineup === 'object' && !Array.isArray(team.roster.lineup)
-                        ? { ...team.roster.lineup }
-                        : (Array.isArray(team.roster?.lineup) ? [...team.roster.lineup] : {}),
-                    bench: Array.isArray(team.roster?.bench) ? [...team.roster.bench] : [],
-                    ir: Array.isArray(team.roster?.ir) ? [...team.roster.ir] : [],
-                };
-                const offer = trade.offers[teamId];
-
-                // Remove outgoing players
-                for (const player of offer.players) {
-                    const rosterType = player.rosterType;
-                    if (rosterType === 'lineup' && newRoster.lineup && typeof newRoster.lineup === 'object' && !Array.isArray(newRoster.lineup)) {
-                        Object.keys(newRoster.lineup).forEach((slot) => {
-                            if (newRoster.lineup[slot] === player.id) {
-                                newRoster.lineup[slot] = null;
-                            }
-                        });
-                    } else if (Array.isArray(newRoster[rosterType])) {
-                        newRoster[rosterType] = newRoster[rosterType].filter(id => id !== player.id);
-                    }
+            await db.runTransaction(async (transaction) => {
+                const tradeSnap = await transaction.get(tradeRef);
+                if (!tradeSnap.exists) {
+                    throw new Error('Trade not found.');
                 }
 
-                // Add incoming players from other teams
-                for (const otherTeamId of trade.teams) {
-                    if (otherTeamId === teamId) continue;
-
-                    const otherOffer = trade.offers[otherTeamId];
-                    for (const player of otherOffer.players) {
-                        newRoster.bench.push(player.id);
-                    }
+                const trade = tradeSnap.data();
+                if (trade.status !== 'pending') {
+                    throw new Error('This trade is no longer pending.');
                 }
 
-                batch.update(teamRef, { roster: newRoster });
-            }
+                const { senderTeamId, receiverTeamId } = getTradeParties(trade);
+                if (!senderTeamId || !receiverTeamId) {
+                    throw new Error('Trade is missing sender or receiver.');
+                }
+                if (currentTeamId !== receiverTeamId) {
+                    throw new Error('Only the receiving team can accept this trade.');
+                }
 
-            // Mark trade as executed
-            batch.update(tradeRef, {
-                status: 'executed',
-                executedAt: firebase.firestore.FieldValue.serverTimestamp()
+                const senderRef = db.doc(`leagues/${currentLeague.id}/teams/${senderTeamId}`);
+                const receiverRef = db.doc(`leagues/${currentLeague.id}/teams/${receiverTeamId}`);
+
+                const senderSnap = await transaction.get(senderRef);
+                const receiverSnap = await transaction.get(receiverRef);
+
+                if (!senderSnap.exists || !receiverSnap.exists) {
+                    throw new Error('Could not load both teams for this trade.');
+                }
+
+                const senderTeam = { id: senderSnap.id, ...senderSnap.data() };
+                const receiverTeam = { id: receiverSnap.id, ...receiverSnap.data() };
+
+                const senderRoster = cloneRoster(senderTeam.roster);
+                const receiverRoster = cloneRoster(receiverTeam.roster);
+
+                const senderOutgoing = trade.offers?.[senderTeamId]?.players || [];
+                const receiverOutgoing = trade.offers?.[receiverTeamId]?.players || [];
+
+                // Snapshot original positional slots so commissioners can reverse exactly
+                const originalLocations = {};
+                senderOutgoing.forEach((player) => {
+                    const location = findPlayerLocation(senderRoster, player.id);
+                    if (location) {
+                        originalLocations[player.id] = { teamId: senderTeamId, ...location };
+                    }
+                });
+                receiverOutgoing.forEach((player) => {
+                    const location = findPlayerLocation(receiverRoster, player.id);
+                    if (location) {
+                        originalLocations[player.id] = { teamId: receiverTeamId, ...location };
+                    }
+                });
+
+                // 1) Remove traded players from their current teams
+                senderOutgoing.forEach((player) => removePlayerFromRoster(senderRoster, player.id));
+                receiverOutgoing.forEach((player) => removePlayerFromRoster(receiverRoster, player.id));
+
+                // 2) Place each side's outgoing players into the other team's open positional slots
+                receiverOutgoing.forEach((player) => {
+                    const position = player.position
+                        || getPlayerDetails(player.id, allPlayers)?.position;
+                    if (!position) {
+                        throw new Error(`Missing position for player ${player.name || player.id}.`);
+                    }
+                    placePlayerInOpenSlot(
+                        senderRoster,
+                        player.id,
+                        position,
+                        senderTeam.teamName || 'Sender'
+                    );
+                });
+
+                senderOutgoing.forEach((player) => {
+                    const position = player.position
+                        || getPlayerDetails(player.id, allPlayers)?.position;
+                    if (!position) {
+                        throw new Error(`Missing position for player ${player.name || player.id}.`);
+                    }
+                    placePlayerInOpenSlot(
+                        receiverRoster,
+                        player.id,
+                        position,
+                        receiverTeam.teamName || 'Receiver'
+                    );
+                });
+
+                transaction.update(tradeRef, {
+                    status: 'accepted',
+                    acceptedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    originalLocations,
+                });
+                transaction.update(senderRef, { roster: senderRoster });
+                transaction.update(receiverRef, { roster: receiverRoster });
             });
 
-            await batch.commit();
-            showMessage("Trade executed successfully!", "success");
+            showMessage('Trade accepted and rosters updated!', 'success');
         } catch (error) {
-            console.error("Error executing trade:", error);
-            showMessage("Error executing trade.", "error");
+            console.error('Error accepting trade:', error);
+            showMessage(error?.message || 'Failed to accept trade.', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -355,18 +403,25 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
     const renderTradeProposal = () => (
         <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700 mb-6">
-                            <h3 className="text-2xl font-bold text-purple-400 mb-4">Propose Trade</h3>
-            
+            <h3 className="text-2xl font-bold text-purple-400 mb-4">Propose Trade</h3>
+            <p className="text-sm text-emerald-400 mb-4">
+                One-on-one trades only. You are the sender; choose one receiving team.
+            </p>
+
             <div className="mb-4">
                 <label className="block text-emerald-200 font-medium mb-2">Teams in Trade:</label>
                 <div className="flex flex-wrap gap-2">
-                    {selectedTeams.map(teamId => {
-                        const team = teamsData.find(t => t.id === teamId);
+                    {selectedTeams.map((teamId) => {
+                        const team = teamsData.find((t) => t.id === teamId);
                         return (
                             <div key={teamId} className="flex items-center gap-2 bg-emerald-800 px-3 py-1 rounded-md">
-                                <span className="text-white">{team?.teamName}</span>
+                                <span className="text-white">
+                                    {team?.teamName}
+                                    {teamId === currentTeamId ? ' (You — Sender)' : ' (Receiver)'}
+                                </span>
                                 {teamId !== currentTeamId && (
-                                    <button 
+                                    <button
+                                        type="button"
                                         onClick={() => removeTeamFromTrade(teamId)}
                                         className="text-red-400 hover:text-red-300"
                                     >
@@ -376,14 +431,14 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                             </div>
                         );
                     })}
-                    {selectedTeams.length < 3 && availableTeamsToAdd.length > 0 && (
+                    {selectedTeams.length < 2 && availableTeamsToAdd.length > 0 && (
                         <div className="flex flex-wrap items-center gap-2">
                             <select
                                 value={teamToAdd}
                                 onChange={(e) => setTeamToAdd(e.target.value)}
                                 className="px-3 py-1 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 text-sm"
                             >
-                                <option value="">Choose a team...</option>
+                                <option value="">Choose receiving team...</option>
                                 {availableTeamsToAdd.map((team) => (
                                     <option key={team.id} value={team.id}>
                                         {team.teamName}
@@ -391,34 +446,36 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                 ))}
                             </select>
                             <button
+                                type="button"
                                 onClick={() => addTeamToTrade(teamToAdd)}
                                 disabled={!teamToAdd}
                                 className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                + Add Team
+                                + Add Receiver
                             </button>
                         </div>
                     )}
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                {selectedTeams.map(teamId => {
-                    const team = teamsData.find(t => t.id === teamId);
-                    const offer = tradeOffers[teamId] || initializeTradeOffer(teamId);
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {selectedTeams.map((teamId) => {
+                    const team = teamsData.find((t) => t.id === teamId);
+                    const offer = tradeOffers[teamId] || initializeTradeOffer();
                     const roster = getTeamRoster(teamId);
-                    
+
                     return (
                         <div key={teamId} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
                             <h4 className="text-lg font-semibold text-white mb-3">{team?.teamName}</h4>
-                            
+
                             <div className="mb-4">
-                                <h5 className="text-sm font-medium text-emerald-300 mb-2">Players:</h5>
+                                <h5 className="text-sm font-medium text-emerald-300 mb-2">Players offering:</h5>
                                 <div className="space-y-2">
                                     {(offer.players || []).map((player, index) => (
-                                        <div key={index} className="flex justify-between items-center bg-emerald-700 p-2 rounded">
+                                        <div key={`${player.id}-${index}`} className="flex justify-between items-center bg-emerald-700 p-2 rounded">
                                             <span className="text-white text-sm">{player.name} ({player.position})</span>
-                                            <button 
+                                            <button
+                                                type="button"
                                                 onClick={() => removePlayerFromTrade(teamId, index)}
                                                 className="text-red-400 hover:text-red-300"
                                             >
@@ -427,9 +484,9 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                         </div>
                                     ))}
                                 </div>
-                                
-                                <div className="mt-3 space-y-2">
-                                    <select 
+
+                                <div className="mt-3">
+                                    <select
                                         onChange={(e) => {
                                             const [playerId, rosterType] = e.target.value.split('|');
                                             if (playerId && rosterType) {
@@ -440,7 +497,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                         className="w-full p-2 rounded bg-emerald-100 text-emerald-900 text-sm border border-emerald-300"
                                     >
                                         <option value="">Add player...</option>
-                                        {(roster.lineup || []).map(playerId => {
+                                        {(roster.lineup || []).map((playerId) => {
                                             const player = getPlayerDetails(playerId, allPlayers);
                                             return (
                                                 <option key={`lineup-${playerId}`} value={`${playerId}|lineup`}>
@@ -448,7 +505,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                                 </option>
                                             );
                                         })}
-                                        {(roster.bench || []).map(playerId => {
+                                        {(roster.bench || []).map((playerId) => {
                                             const player = getPlayerDetails(playerId, allPlayers);
                                             return (
                                                 <option key={`bench-${playerId}`} value={`${playerId}|bench`}>
@@ -464,9 +521,10 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                 <h5 className="text-sm font-medium text-emerald-300 mb-2">Draft Picks:</h5>
                                 <div className="space-y-2">
                                     {(offer.draftPicks || []).map((pick, index) => (
-                                        <div key={index} className="flex justify-between items-center bg-emerald-700 p-2 rounded">
+                                        <div key={`${pick.year}-${pick.round}-${index}`} className="flex justify-between items-center bg-emerald-700 p-2 rounded">
                                             <span className="text-white text-sm">{pick.year} Round {pick.round}</span>
-                                            <button 
+                                            <button
+                                                type="button"
                                                 onClick={() => removeDraftPick(teamId, index)}
                                                 className="text-red-400 hover:text-red-300"
                                             >
@@ -475,20 +533,19 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                         </div>
                                     ))}
                                 </div>
-                                
                                 <div className="mt-3">
-                                    <select 
+                                    <select
                                         onChange={(e) => {
                                             const round = e.target.value;
                                             if (round) {
-                                                addDraftPick(teamId, parseInt(round));
+                                                addDraftPick(teamId, parseInt(round, 10));
                                                 e.target.value = '';
                                             }
                                         }}
                                         className="w-full p-2 rounded bg-emerald-100 text-emerald-900 text-sm border border-emerald-300"
                                     >
                                         <option value="">Add draft pick...</option>
-                                        {[1, 2, 3, 4, 5, 6, 7].map(round => (
+                                        {[1, 2, 3, 4, 5, 6, 7].map((round) => (
                                             <option key={round} value={round}>Round {round}</option>
                                         ))}
                                     </select>
@@ -506,7 +563,8 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             </div>
 
             <div className="mt-6">
-                <button 
+                <button
+                    type="button"
                     onClick={proposeTrade}
                     disabled={isLoading}
                     className="w-full px-8 py-4 bg-purple-800 hover:bg-purple-900 text-white font-bold rounded-md disabled:opacity-50 transition-colors shadow-lg"
@@ -520,91 +578,94 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
     const renderPendingTrades = () => (
         <div className="bg-emerald-900 p-6 rounded-lg border-2 border-emerald-700">
             <h3 className="text-2xl font-bold text-emerald-400 mb-4">Pending Trades</h3>
-            
+
             {pendingTrades.length === 0 ? (
                 <p className="text-emerald-400">No pending trades.</p>
             ) : (
                 <div className="space-y-4">
-                    {pendingTrades.map(trade => {
-                        const isInvolved = trade.teams.includes(currentTeamId);
-                        const hasResponded = trade.responses[currentTeamId];
-                        const allAccepted = trade.teams.every(teamId => trade.responses[teamId] === 'accepted');
-                        
+                    {pendingTrades.map((trade) => {
+                        const { senderTeamId, receiverTeamId } = getTradeParties(trade);
+                        const isSender = currentTeamId === senderTeamId;
+                        const isReceiver = currentTeamId === receiverTeamId;
+                        const isPending = trade.status === 'pending';
+
                         return (
                             <div key={trade.id} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
                                 <div className="flex justify-between items-start mb-3">
                                     <div>
                                         <h4 className="text-lg font-semibold text-white">Trade #{trade.id.slice(-6)}</h4>
                                         <p className="text-emerald-300 text-sm">
-                                            Proposed by: {teamsData.find(t => t.id === trade.proposedBy)?.teamName}
+                                            Sender: {teamsData.find((t) => t.id === senderTeamId)?.teamName || 'Unknown'}
+                                        </p>
+                                        <p className="text-emerald-300 text-sm">
+                                            Receiver: {teamsData.find((t) => t.id === receiverTeamId)?.teamName || 'Unknown'}
                                         </p>
                                     </div>
-                                    <div className="text-right">
-                                        <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                            allAccepted ? 'bg-emerald-600 text-white' : 'bg-yellow-600 text-white'
-                                        }`}>
-                                            {allAccepted ? 'All Accepted' : 'Pending'}
-                                        </span>
-                                    </div>
+                                    <span className="px-2 py-1 rounded text-xs font-bold bg-yellow-600 text-white">
+                                        Pending
+                                    </span>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-                                    {trade.teams.map(teamId => {
-                                        const team = teamsData.find(t => t.id === teamId);
-                                        const offer = trade.offers[teamId];
-                                        const response = trade.responses[teamId];
-                                        
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                    {(trade.teams || [senderTeamId, receiverTeamId]).filter(Boolean).map((teamId) => {
+                                        const team = teamsData.find((t) => t.id === teamId);
+                                        const offer = trade.offers?.[teamId];
                                         return (
                                             <div key={teamId} className="bg-emerald-700 p-3 rounded">
-                                                <div className="flex justify-between items-center mb-2">
-                                                    <h5 className="font-semibold text-white">{team?.teamName}</h5>
-                                                    <span className={`px-2 py-1 rounded text-xs ${
-                                                        response === 'accepted' ? 'bg-emerald-600 text-white' :
-                                                        response === 'declined' ? 'bg-red-600 text-white' :
-                                                        'bg-emerald-600 text-white'
-                                                    }`}>
-                                                        {response || 'Pending'}
-                                                    </span>
-                                                </div>
-                                                
-                                                <div className="text-sm text-emerald-300">
-                                                    <p>Players: {offer?.players?.length || 0}</p>
-                                                    <p>Draft Picks: {offer?.draftPicks?.length || 0}</p>
-                                                    {salaryRulesEnabled && <p>Salary: ${offer?.salaryCap || 0}</p>}
-                                                </div>
+                                                <h5 className="font-semibold text-white mb-2">{team?.teamName}</h5>
+                                                <ul className="text-sm text-emerald-200 space-y-1">
+                                                    {(offer?.players || []).map((player) => (
+                                                        <li key={player.id}>
+                                                            {player.name} ({player.position})
+                                                        </li>
+                                                    ))}
+                                                    {(offer?.draftPicks || []).map((pick, idx) => (
+                                                        <li key={`${pick.year}-${pick.round}-${idx}`}>
+                                                            {pick.year} Round {pick.round}
+                                                        </li>
+                                                    ))}
+                                                    {!offer?.players?.length && !offer?.draftPicks?.length && (
+                                                        <li className="text-emerald-400">No assets listed</li>
+                                                    )}
+                                                </ul>
+                                                {salaryRulesEnabled && (
+                                                    <p className="text-xs text-emerald-300 mt-2">Salary: ${offer?.salaryCap || 0}</p>
+                                                )}
                                             </div>
                                         );
                                     })}
                                 </div>
 
-                                <div className="flex gap-2">
-                                    {isInvolved && !hasResponded && (
+                                <div className="flex flex-wrap gap-2">
+                                    {isPending && isSender && (
+                                        <button
+                                            type="button"
+                                            onClick={() => cancelTrade(trade.id)}
+                                            disabled={isLoading}
+                                            className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md disabled:opacity-50 transition-colors font-semibold"
+                                        >
+                                            Cancel Trade
+                                        </button>
+                                    )}
+                                    {isPending && isReceiver && (
                                         <>
-                                            <button 
-                                                onClick={() => respondToTrade(trade.id, 'accepted')}
+                                            <button
+                                                type="button"
+                                                onClick={() => rejectTrade(trade.id)}
                                                 disabled={isLoading}
-                                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50 transition-colors"
+                                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50 transition-colors font-semibold"
                                             >
-                                                Accept
+                                                Reject Trade
                                             </button>
-                                            <button 
-                                                onClick={() => respondToTrade(trade.id, 'declined')}
+                                            <button
+                                                type="button"
+                                                onClick={() => acceptTrade(trade.id)}
                                                 disabled={isLoading}
-                                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50 transition-colors"
+                                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50 transition-colors font-semibold"
                                             >
-                                                Decline
+                                                Accept Trade
                                             </button>
                                         </>
-                                    )}
-                                    
-                                    {isCommissioner && allAccepted && (
-                                        <button 
-                                            onClick={() => executeTrade(trade.id)}
-                                            disabled={isLoading}
-                                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md disabled:opacity-50 transition-colors"
-                                        >
-                                            Execute Trade
-                                        </button>
                                     )}
                                 </div>
                             </div>
@@ -615,24 +676,17 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         </div>
     );
 
-    // Show loading state if data is not ready
     if (!currentLeague || !currentTeam || !currentTeamId) {
-        console.log('TradeCenter Debug:', { currentLeague, currentTeam, currentTeamId });
         return (
-                    <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-7xl mx-auto my-2 sm:my-8 text-white">
-            <div className="text-center">
-                <h2 className="text-3xl font-bold text-white mb-4">Trade Center</h2>
-                <p className="text-emerald-300">Loading league and team data...</p>
-                <div className="mt-4 text-sm text-emerald-400">
-                    <p>League: {currentLeague ? 'Loaded' : 'Missing'}</p>
-                    <p>Team: {currentTeam ? 'Loaded' : 'Missing'}</p>
-                    <p>Team ID: {currentTeamId || 'Missing'}</p>
-                </div>
-                <div className="flex items-center justify-center py-10">
-                    <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+            <div className="p-4 sm:p-6 bg-emerald-950 rounded-lg shadow-xl max-w-7xl mx-auto my-2 sm:my-8 text-white">
+                <div className="text-center">
+                    <h2 className="text-3xl font-bold text-white mb-4">Trade Center</h2>
+                    <p className="text-emerald-300">Loading league and team data...</p>
+                    <div className="flex items-center justify-center py-10">
+                        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+                    </div>
                 </div>
             </div>
-        </div>
         );
     }
 
@@ -642,9 +696,6 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                 <h2 className="text-3xl font-bold text-white mb-2">Trade Center</h2>
                 <p className="text-emerald-300">League: {currentLeague?.name}</p>
                 <p className="text-emerald-300">Your Team: {currentTeam?.teamName}</p>
-                {isCommissioner && (
-                    <p className="text-purple-400 font-semibold">Commissioner Mode</p>
-                )}
             </div>
 
             {renderTradeProposal()}
@@ -660,4 +711,6 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
             </div>
         </div>
     );
-}; 
+};
+
+export default TradeCenter;

@@ -20,11 +20,13 @@ import {
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
+import { CommissionerRosterEditor } from './CommissionerRosterEditor.js';
+import { CommissionerTradeUndo } from './CommissionerTradeUndo.js';
 import { appId } from '../config/firebase.js';
 
 const firebase = window.firebase;
 
-export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onLeagueUpdate }) => {
+export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onLeagueUpdate, allPlayers = [] }) => {
     const { db, userId } = useFirebase();
     const [teamsData, setTeamsData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -811,6 +813,21 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
             </div>
 
             {/* Team Management Section */}
+            <CommissionerRosterEditor
+                currentLeague={currentLeague}
+                teamsData={teamsData}
+                allPlayers={allPlayers}
+                showMessage={showMessage}
+            />
+
+            <CommissionerTradeUndo
+                currentLeague={currentLeague}
+                teamsData={teamsData}
+                allPlayers={allPlayers}
+                showMessage={showMessage}
+                userId={userId}
+            />
+
             <div className="bg-emerald-900 p-6 rounded-lg shadow-lg border-2 border-emerald-700">
                 <h3 className="text-2xl font-bold text-purple-400 mb-4">Team Management</h3>
                 <div className="space-y-4">
