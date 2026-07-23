@@ -15,11 +15,17 @@ const {
 // Initialize Firebase Admin
 admin.initializeApp();
 
-const { syncSleeperPlayersScheduled } = require('./sleeperPlayerSync.js');
+const {
+    fetchAndStoreSleeperDataWeekday,
+    fetchAndStoreSleeperDataSunday,
+} = require('./sleeperPlayerSync.js');
 const { runSleeperPlayerSync } = require('./sleeperSyncRunner.js');
 const { runProjectionScrape } = require('./projectionScrapeRunner.js');
 const { finalizeAllLeagueStandings } = require('./scoringEngine.js');
-exports.syncSleeperPlayersScheduled = syncSleeperPlayersScheduled;
+
+// Sleeper NFL player sync — Mon–Sat 6 AM ET + Sunday 10 AM ET (America/New_York)
+exports.fetchAndStoreSleeperDataWeekday = fetchAndStoreSleeperDataWeekday;
+exports.fetchAndStoreSleeperDataSunday = fetchAndStoreSleeperDataSunday;
 
 // CORS configuration
 const cors = require('cors')({

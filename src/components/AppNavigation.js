@@ -8,6 +8,9 @@ const LEAGUE_TABS = [
     { id: 'trade', label: 'Trade', shortLabel: 'Trade' },
     { id: 'standings', label: 'Standings', shortLabel: 'Standings' },
     { id: 'live-scores', label: 'Live Scores', shortLabel: 'Scores' },
+    { id: 'league-dues', label: 'League Dues', shortLabel: 'Dues' },
+    { id: 'league-chat', label: 'League Chat', shortLabel: 'Chat' },
+    { id: 'direct-messages', label: 'Messages', shortLabel: 'DMs' },
 ];
 
 const ALWAYS_TABS = [

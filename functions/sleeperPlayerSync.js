@@ -24,6 +24,11 @@ const parseSleeperPlayer = (player) => ({
     age: safeGet(player, 'age'),
     years_exp: safeGet(player, 'years_exp'),
     rookie_year: safeGet(player, 'rookie_year'),
+    status: safeGet(player, 'status'),
+    injury_status: safeGet(player, 'injury_status'),
+    fantasy_positions: safeGet(player, 'fantasy_positions'),
+    number: safeGet(player, 'number'),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
 });
 
 const filterActiveEligiblePlayers = (playersById) => {
@@ -76,43 +81,90 @@ async function writePlayersInBatches(db, filteredPlayers) {
     return totalWritten;
 }
 
-async function syncSleeperPlayersToFirestore() {
+/**
+ * Core reusable sync: fetch NFL players from the Sleeper API and upsert into Firestore.
+ */
+async function fetchAndStoreSleeperData() {
     const db = admin.firestore();
+    logger.info('fetchAndStoreSleeperData: fetching players from Sleeper API');
+
     const playersById = await fetchSleeperNflPlayers();
     const filteredPlayers = filterActiveEligiblePlayers(playersById);
     const totalWritten = await writePlayersInBatches(db, filteredPlayers);
 
-    return {
+    const result = {
         totalFetched: Object.keys(playersById).length,
         totalEligible: filteredPlayers.length,
         totalWritten,
+        syncedAt: new Date().toISOString(),
     };
+
+    logger.info('fetchAndStoreSleeperData: completed', result);
+    return result;
 }
 
-const syncSleeperPlayersScheduled = onSchedule(
+/** @deprecated Prefer fetchAndStoreSleeperData */
+const syncSleeperPlayersToFirestore = fetchAndStoreSleeperData;
+
+const scheduleOptions = {
+    timeZone: 'America/New_York',
+    retryCount: 3,
+    timeoutSeconds: 540,
+    memory: '1GiB',
+};
+
+/**
+ * Mon–Sat at 6:00 AM Eastern — fetch & store Sleeper player data.
+ */
+const fetchAndStoreSleeperDataWeekday = onSchedule(
     {
-        schedule: '0 3 * * *',
-        timeZone: 'America/New_York',
-        retryCount: 3,
+        ...scheduleOptions,
+        schedule: '0 6 * * 1-6',
     },
     async (event) => {
-        logger.info('Starting scheduled Sleeper player sync', {
+        logger.info('Starting weekday Sleeper player sync (Mon–Sat 6:00 AM ET)', {
             scheduleTime: event.scheduleTime,
         });
 
         try {
-            const result = await syncSleeperPlayersToFirestore();
-            logger.info('Scheduled Sleeper player sync completed', result);
+            const result = await fetchAndStoreSleeperData();
+            logger.info('Weekday Sleeper player sync completed', result);
             return result;
         } catch (error) {
-            logger.error('Scheduled Sleeper player sync failed', error);
+            logger.error('Weekday Sleeper player sync failed', error);
+            throw error;
+        }
+    }
+);
+
+/**
+ * Sunday at 10:00 AM Eastern — fetch & store Sleeper player data.
+ */
+const fetchAndStoreSleeperDataSunday = onSchedule(
+    {
+        ...scheduleOptions,
+        schedule: '0 10 * * 0',
+    },
+    async (event) => {
+        logger.info('Starting Sunday Sleeper player sync (10:00 AM ET)', {
+            scheduleTime: event.scheduleTime,
+        });
+
+        try {
+            const result = await fetchAndStoreSleeperData();
+            logger.info('Sunday Sleeper player sync completed', result);
+            return result;
+        } catch (error) {
+            logger.error('Sunday Sleeper player sync failed', error);
             throw error;
         }
     }
 );
 
 module.exports = {
-    syncSleeperPlayersScheduled,
+    fetchAndStoreSleeperData,
+    fetchAndStoreSleeperDataWeekday,
+    fetchAndStoreSleeperDataSunday,
     syncSleeperPlayersToFirestore,
     parseSleeperPlayer,
     filterActiveEligiblePlayers,

@@ -89,6 +89,17 @@ const Standings = ({ currentLeague, showMessage }) => {
         .sort()
         .pop() || null;
 
+    const rankBadgeClass = (index) => {
+        if (index === 0) return 'bg-yellow-500 text-yellow-900';
+        if (index === 1) return 'bg-gray-400 text-gray-900';
+        if (index === 2) return 'bg-orange-600 text-orange-100';
+        return 'bg-emerald-700 text-emerald-200';
+    };
+
+    const formatRecord = (team) => (
+        `${team.wins}-${team.losses}${team.ties > 0 ? `-${team.ties}` : ''}`
+    );
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center pt-20">
@@ -99,9 +110,9 @@ const Standings = ({ currentLeague, showMessage }) => {
 
     return (
         <div className="space-y-6">
-            <div className="bg-emerald-950 p-6 rounded-lg shadow-md">
+            <div className="bg-emerald-950 p-4 sm:p-6 rounded-lg shadow-md">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-                    <h2 className="text-3xl font-bold text-emerald-200 text-center sm:text-left">
+                    <h2 className="text-2xl sm:text-3xl font-bold text-emerald-200 text-center sm:text-left">
                         {currentLeague?.name} - League Standings
                     </h2>
                     <p className="text-xs text-emerald-400 text-center sm:text-right">
@@ -122,67 +133,130 @@ const Standings = ({ currentLeague, showMessage }) => {
                         <p className="text-sm text-emerald-400 mt-2">Teams will appear here once they join the league.</p>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full bg-emerald-900 rounded-lg shadow-lg">
-                            <thead>
-                                <tr className="bg-emerald-800 text-emerald-200">
-                                    <th className="py-4 px-6 text-left font-bold text-lg">Team</th>
-                                    <th className="py-4 px-6 text-center font-bold text-lg">Record</th>
-                                    <th className="py-4 px-6 text-center font-bold text-lg">Points For</th>
-                                    <th className="py-4 px-6 text-center font-bold text-lg">Points Against</th>
-                                </tr>
-                            </thead>
-                            <tbody className="text-emerald-100">
-                                {standings.map((team, index) => (
-                                    <tr
-                                        key={team.id}
-                                        className={`border-b border-emerald-700 hover:bg-emerald-800 transition-colors ${
-                                            index === 0 ? 'bg-purple-900' : ''
-                                        }`}
-                                    >
-                                        <td className="py-4 px-6 text-left">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                                    index === 0 ? 'bg-yellow-500 text-yellow-900'
-                                                        : index === 1 ? 'bg-gray-400 text-gray-900'
-                                                            : index === 2 ? 'bg-orange-600 text-orange-100'
-                                                                : 'bg-emerald-700 text-emerald-200'
-                                                }`}
-                                                >
-                                                    {index + 1}
-                                                </div>
-                                                <div>
-                                                    <div className="font-semibold text-lg">{team.teamName}</div>
-                                                    <div className="text-sm text-emerald-300">
-                                                        {team.ownerName || 'Unknown Owner'}
+                    <>
+                        {/* Mobile card layout */}
+                        <div className="md:hidden space-y-3">
+                            {standings.map((team, index) => (
+                                <div
+                                    key={team.id}
+                                    className={`rounded-lg border p-4 ${
+                                        index === 0
+                                            ? 'bg-purple-900/80 border-purple-600'
+                                            : 'bg-emerald-900 border-emerald-700'
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-3 mb-4">
+                                        {team.avatarUrl ? (
+                                            <img
+                                                src={team.avatarUrl}
+                                                alt=""
+                                                className="h-12 w-12 rounded-full object-cover flex-shrink-0 border-2 border-emerald-600"
+                                            />
+                                        ) : (
+                                            <div
+                                                className={`h-12 w-12 rounded-full flex items-center justify-center text-base font-bold flex-shrink-0 ${rankBadgeClass(index)}`}
+                                            >
+                                                {index + 1}
+                                            </div>
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className={`inline-flex h-6 min-w-[1.5rem] px-1.5 items-center justify-center rounded-full text-xs font-bold ${rankBadgeClass(index)}`}>
+                                                    #{index + 1}
+                                                </span>
+                                                <h3 className="font-semibold text-lg text-white truncate">{team.teamName}</h3>
+                                            </div>
+                                            <p className="text-sm text-emerald-300 truncate">
+                                                {team.ownerName || 'Unknown Owner'}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2 text-center">
+                                        <div className="bg-emerald-950/60 rounded-md p-2">
+                                            <p className="text-[11px] uppercase tracking-wide text-emerald-400 mb-1">Record</p>
+                                            <p className="text-lg font-bold text-white">{formatRecord(team)}</p>
+                                            <p className="text-xs text-emerald-300">{((team.winPercentage * 100).toFixed(1))}%</p>
+                                        </div>
+                                        <div className="bg-emerald-950/60 rounded-md p-2">
+                                            <p className="text-[11px] uppercase tracking-wide text-emerald-400 mb-1">PF</p>
+                                            <p className="text-lg font-bold text-green-300">
+                                                {Number(team.pointsFor || 0).toFixed(1)}
+                                            </p>
+                                        </div>
+                                        <div className="bg-emerald-950/60 rounded-md p-2">
+                                            <p className="text-[11px] uppercase tracking-wide text-emerald-400 mb-1">PA</p>
+                                            <p className="text-lg font-bold text-red-300">
+                                                {Number(team.pointsAgainst || 0).toFixed(1)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Desktop table layout */}
+                        <div className="hidden md:block overflow-x-auto">
+                            <table className="min-w-full bg-emerald-900 rounded-lg shadow-lg">
+                                <thead>
+                                    <tr className="bg-emerald-800 text-emerald-200">
+                                        <th className="py-4 px-6 text-left font-bold text-lg">Team</th>
+                                        <th className="py-4 px-6 text-center font-bold text-lg">Record</th>
+                                        <th className="py-4 px-6 text-center font-bold text-lg">Points For</th>
+                                        <th className="py-4 px-6 text-center font-bold text-lg">Points Against</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-emerald-100">
+                                    {standings.map((team, index) => (
+                                        <tr
+                                            key={team.id}
+                                            className={`border-b border-emerald-700 hover:bg-emerald-800 transition-colors ${
+                                                index === 0 ? 'bg-purple-900' : ''
+                                            }`}
+                                        >
+                                            <td className="py-4 px-6 text-left">
+                                                <div className="flex items-center gap-3">
+                                                    {team.avatarUrl ? (
+                                                        <img
+                                                            src={team.avatarUrl}
+                                                            alt=""
+                                                            className="w-8 h-8 rounded-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${rankBadgeClass(index)}`}>
+                                                            {index + 1}
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <div className="font-semibold text-lg">{team.teamName}</div>
+                                                        <div className="text-sm text-emerald-300">
+                                                            {team.ownerName || 'Unknown Owner'}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        </td>
-                                        <td className="py-4 px-6 text-center">
-                                            <div className="text-xl font-bold">
-                                                {team.wins}-{team.losses}
-                                                {team.ties > 0 && `-${team.ties}`}
-                                            </div>
-                                            <div className="text-sm text-emerald-300">
-                                                {((team.winPercentage * 100).toFixed(1))}%
-                                            </div>
-                                        </td>
-                                        <td className="py-4 px-6 text-center">
-                                            <div className="text-xl font-bold text-green-300">
-                                                {Number(team.pointsFor || 0).toFixed(1)}
-                                            </div>
-                                        </td>
-                                        <td className="py-4 px-6 text-center">
-                                            <div className="text-xl font-bold text-red-300">
-                                                {Number(team.pointsAgainst || 0).toFixed(1)}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                            </td>
+                                            <td className="py-4 px-6 text-center">
+                                                <div className="text-xl font-bold">{formatRecord(team)}</div>
+                                                <div className="text-sm text-emerald-300">
+                                                    {((team.winPercentage * 100).toFixed(1))}%
+                                                </div>
+                                            </td>
+                                            <td className="py-4 px-6 text-center">
+                                                <div className="text-xl font-bold text-green-300">
+                                                    {Number(team.pointsFor || 0).toFixed(1)}
+                                                </div>
+                                            </td>
+                                            <td className="py-4 px-6 text-center">
+                                                <div className="text-xl font-bold text-red-300">
+                                                    {Number(team.pointsAgainst || 0).toFixed(1)}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
                 )}
             </div>
 

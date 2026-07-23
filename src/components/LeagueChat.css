@@ -1,0 +1,149 @@
+.league-chat {
+    display: flex;
+    flex-direction: column;
+    max-width: 48rem;
+    margin: 0.5rem auto 2rem;
+    background: #022c22;
+    border: 2px solid #065f46;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    color: #ecfdf5;
+    min-height: 28rem;
+    height: min(70vh, 40rem);
+}
+
+.league-chat__header {
+    padding: 1rem 1.25rem;
+    background: #064e3b;
+    border-bottom: 1px solid #047857;
+}
+
+.league-chat__title {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #f5f3ff;
+}
+
+.league-chat__subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: #6ee7b7;
+}
+
+.league-chat__window {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    background: #012019;
+}
+
+.league-chat__empty,
+.league-chat__error {
+    margin: auto;
+    text-align: center;
+    color: #6ee7b7;
+    font-size: 0.95rem;
+}
+
+.league-chat__error {
+    color: #fecaca;
+}
+
+.league-chat__bubble {
+    max-width: 85%;
+    padding: 0.65rem 0.85rem;
+    border-radius: 0.75rem;
+    word-break: break-word;
+}
+
+.league-chat__bubble--mine {
+    align-self: flex-end;
+    background: #6b21a8;
+    border-bottom-right-radius: 0.2rem;
+}
+
+.league-chat__bubble--theirs {
+    align-self: flex-start;
+    background: #065f46;
+    border-bottom-left-radius: 0.2rem;
+}
+
+.league-chat__meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.75rem;
+    opacity: 0.85;
+}
+
+.league-chat__sender {
+    font-weight: 600;
+}
+
+.league-chat__text {
+    margin: 0;
+    line-height: 1.4;
+    font-size: 0.95rem;
+}
+
+.league-chat__composer {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: #064e3b;
+    border-top: 1px solid #047857;
+}
+
+.league-chat__input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid #059669;
+    border-radius: 0.5rem;
+    background: #022c22;
+    color: #ecfdf5;
+    font-size: 1rem;
+}
+
+.league-chat__input:focus {
+    outline: 2px solid #a855f7;
+    outline-offset: 1px;
+}
+
+.league-chat__send {
+    padding: 0.75rem 1.1rem;
+    border: none;
+    border-radius: 0.5rem;
+    background: #7e22ce;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.league-chat__send:hover:not(:disabled) {
+    background: #6b21a8;
+}
+
+.league-chat__send:disabled,
+.league-chat__input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+    .league-chat {
+        margin: 0.25rem 0 1rem;
+        height: min(65vh, 36rem);
+        border-radius: 0.5rem;
+    }
+
+    .league-chat__bubble {
+        max-width: 92%;
+    }
+}

@@ -35,6 +35,9 @@ const Standings = React.lazy(() => import('./components/Standings.js'));
 const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
 const AccountProfile = React.lazy(() => import('./components/AccountProfile.js'));
+const LeagueDues = React.lazy(() => import('./components/LeagueDues.js').then(module => ({ default: module.LeagueDues })));
+const LeagueChat = React.lazy(() => import('./components/LeagueChat.js').then(module => ({ default: module.LeagueChat })));
+const DirectMessages = React.lazy(() => import('./components/DirectMessages.js').then(module => ({ default: module.DirectMessages })));
 
 // Loading component for lazy-loaded components
 const LoadingSpinner = () => (
@@ -441,6 +444,27 @@ const App = () => {
                                     allPlayers={allPlayers}
                                     showMessage={showMessage}
                                     currentTeamId={currentTeamId}
+                                />
+                            )}
+                            {activeTab === 'league-dues' && currentLeague && (
+                                <LeagueDues
+                                    currentLeague={currentLeague}
+                                    showMessage={showMessage}
+                                    userId={userId}
+                                />
+                            )}
+                            {activeTab === 'league-chat' && currentLeague && (
+                                <LeagueChat
+                                    leagueId={currentLeague.id}
+                                    senderId={userId}
+                                    senderName={userDisplayName}
+                                />
+                            )}
+                            {activeTab === 'direct-messages' && currentLeague && (
+                                <DirectMessages
+                                    currentUserId={userId}
+                                    currentUserDisplayName={userDisplayName}
+                                    teamsData={teamsData}
                                 />
                             )}
                             {activeTab === 'trade' && (
