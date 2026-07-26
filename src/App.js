@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
+import {
+    collection,
+    doc,
+    onSnapshot,
+    query,
+    updateDoc,
+    where,
+} from 'firebase/firestore';
 import { useFirebase } from './contexts/FirebaseContext.js';
+import { getModularFirestore } from './config/firebaseModular.js';
 import { AuthScreen } from './components/AuthScreen.js';
 import { LeagueSelector } from './components/LeagueSelector.js';
 import { Avatar } from './components/Avatar.js';
@@ -57,12 +66,14 @@ const App = () => {
     const [currentTeam, setCurrentTeam] = useState(null);
     const [teamsData, setTeamsData] = useState([]);
     const [allPlayers, setAllPlayers] = useState([]);
+    const [unreadTradeNotifications, setUnreadTradeNotifications] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isProcessingInvite, setIsProcessingInvite] = useState(false);
     const [inviteLoginGate, setInviteLoginGate] = useState(false);
     const [isClearingInviteSession, setIsClearingInviteSession] = useState(false);
     const inviteProcessedRef = useRef(false);
     const inviteSignOutStartedRef = useRef(false);
+    const seenTradeNotificationIdsRef = useRef(new Set());
 
     const isLoadingData = (currentLeagueId && !currentLeague) || (currentTeamId && !currentTeam);
     const isCommissioner = isLeagueCommissioner(currentLeague, userId);
@@ -86,6 +97,61 @@ const App = () => {
         setCurrentTeam(null);
         setActiveTab('leagues');
     };
+
+    useEffect(() => {
+        seenTradeNotificationIdsRef.current = new Set();
+        setUnreadTradeNotifications([]);
+
+        if (!currentLeagueId || !userId) return undefined;
+
+        const modularDb = getModularFirestore();
+        const notificationsQuery = query(
+            collection(modularDb, 'leagues', currentLeagueId, 'notifications'),
+            where('recipientUserId', '==', userId)
+        );
+
+        return onSnapshot(notificationsQuery, (snapshot) => {
+            const unread = snapshot.docs
+                .map((notificationDoc) => ({ id: notificationDoc.id, ...notificationDoc.data() }))
+                .filter((notification) => notification.type === 'trade_proposed' && !notification.read);
+
+            setUnreadTradeNotifications(unread);
+
+            const newNotification = unread.find(
+                (notification) => !seenTradeNotificationIdsRef.current.has(notification.id)
+            );
+            unread.forEach((notification) => {
+                seenTradeNotificationIdsRef.current.add(notification.id);
+            });
+
+            if (newNotification) {
+                setMessage(newNotification.message || 'You received a new trade proposal.');
+                setMessageType('success');
+                setTimeout(() => {
+                    setMessage('');
+                    setMessageType('');
+                }, 6000);
+            }
+        }, (error) => {
+            console.error('Error listening for trade notifications:', error);
+        });
+    }, [currentLeagueId, userId]);
+
+    useEffect(() => {
+        if (activeTab !== 'trade' || unreadTradeNotifications.length === 0 || !currentLeagueId) {
+            return;
+        }
+
+        const modularDb = getModularFirestore();
+        Promise.all(unreadTradeNotifications.map((notification) => (
+            updateDoc(
+                doc(modularDb, 'leagues', currentLeagueId, 'notifications', notification.id),
+                { read: true }
+            )
+        ))).catch((error) => {
+            console.error('Error marking trade notifications read:', error);
+        });
+    }, [activeTab, currentLeagueId, unreadTradeNotifications]);
 
     // Re-capture invite on mount; pause league UI until invite is resolved
     useEffect(() => {
@@ -398,6 +464,7 @@ const App = () => {
                 setActiveTab={setActiveTab}
                 showLeagueTabs={Boolean(currentLeagueId && currentTeamId)}
                 isCommissioner={isCommissioner}
+                unreadTradeCount={unreadTradeNotifications.length}
             />
 
             <main className="mobile-page max-w-7xl mx-auto w-full">

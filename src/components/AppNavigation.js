@@ -33,7 +33,13 @@ const mobileTabButtonClass = (isActive) => (
     }`
 );
 
-export const AppNavigation = ({ activeTab, setActiveTab, showLeagueTabs, isCommissioner }) => {
+export const AppNavigation = ({
+    activeTab,
+    setActiveTab,
+    showLeagueTabs,
+    isCommissioner,
+    unreadTradeCount = 0,
+}) => {
     const tabs = showLeagueTabs
         ? [
             ...LEAGUE_TABS,
@@ -54,6 +60,14 @@ export const AppNavigation = ({ activeTab, setActiveTab, showLeagueTabs, isCommi
                                 className={tabButtonClass(activeTab === tab.id)}
                             >
                                 {tab.label}
+                                {tab.id === 'trade' && unreadTradeCount > 0 && (
+                                    <span
+                                        className="ml-2 inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs text-white"
+                                        aria-label={`${unreadTradeCount} unread trade proposals`}
+                                    >
+                                        {unreadTradeCount > 9 ? '9+' : unreadTradeCount}
+                                    </span>
+                                )}
                             </button>
                         </li>
                     ))}
@@ -74,6 +88,14 @@ export const AppNavigation = ({ activeTab, setActiveTab, showLeagueTabs, isCommi
                                 className={mobileTabButtonClass(activeTab === tab.id)}
                             >
                                 {tab.shortLabel}
+                                {tab.id === 'trade' && unreadTradeCount > 0 && (
+                                    <span
+                                        className="ml-1 inline-flex min-w-4 h-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white"
+                                        aria-label={`${unreadTradeCount} unread trade proposals`}
+                                    >
+                                        {unreadTradeCount > 9 ? '9+' : unreadTradeCount}
+                                    </span>
+                                )}
                             </button>
                         </li>
                     ))}

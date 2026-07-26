@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { useFirebase } from '../contexts/FirebaseContext.js';
+import { getModularFirestore } from '../config/firebaseModular.js';
 import { getPlayerDetails } from '../utils/helpers.js';
 import {
     isTeamSalaryCapEnabled,
@@ -225,9 +227,16 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         if (!receiverTeamId) {
             return showMessage('Select a receiving team.', 'error');
         }
+        const receiverTeam = teamsData.find((team) => team.id === receiverTeamId);
+        if (!receiverTeam?.ownerId) {
+            return showMessage('The receiving team does not have a manager to notify.', 'error');
+        }
 
         setIsLoading(true);
         try {
+            const modularDb = getModularFirestore();
+            const tradeRef = doc(collection(modularDb, 'leagues', currentLeague.id, 'trades'));
+            const notificationRef = doc(collection(modularDb, 'leagues', currentLeague.id, 'notifications'));
             const tradeData = {
                 teams: selectedTeams,
                 senderTeamId: currentTeamId,
@@ -235,10 +244,23 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                 offers: tradeOffers,
                 proposedBy: currentTeamId,
                 status: 'pending',
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: serverTimestamp(),
             };
 
-            await db.collection(`leagues/${currentLeague.id}/trades`).add(tradeData);
+            const batch = writeBatch(modularDb);
+            batch.set(tradeRef, tradeData);
+            batch.set(notificationRef, {
+                type: 'trade_proposed',
+                tradeId: tradeRef.id,
+                recipientTeamId: receiverTeamId,
+                recipientUserId: receiverTeam.ownerId,
+                senderTeamId: currentTeamId,
+                senderTeamName: currentTeam?.teamName || 'Another team',
+                message: `${currentTeam?.teamName || 'Another team'} sent you a trade proposal.`,
+                read: false,
+                createdAt: serverTimestamp(),
+            });
+            await batch.commit();
 
             showMessage('Trade proposal sent successfully!', 'success');
             setSelectedTeams([currentTeamId]);
