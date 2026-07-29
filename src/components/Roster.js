@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
+import { useAutoSetLineup } from '../hooks/useAutoSetLineup.js';
+import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
 import {
     buildLineupDisplayOrder,
     INITIAL_ROSTER_LIMITS,
@@ -130,6 +132,15 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
     const lineupDisplayOrder = buildLineupDisplayOrder(currentLeague?.settings?.startingSlots);
     const isAuctionComplete = currentLeague?.auction?.status === 'complete';
     const useFaabWaivers = isFaabWaiver(leagueSettings);
+    const { setEnabled: setAutoSetLineupEnabled, isSaving: isAutoSetSaving } = useAutoSetLineup({
+        leagueId: currentLeague?.id,
+        teamId: teamData?.id || currentTeamId,
+        allPlayers,
+        rosterLimits,
+        slotOrder: lineupDisplayOrder,
+        enabled: teamData?.autoSetLineupEnabled === true,
+        showMessage,
+    });
 
     useEffect(() => {
         setNewTeamName(teamData.teamName || '');
@@ -387,7 +398,14 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-8">
                 <div>
-                    <h3 className="text-2xl font-bold text-purple-400 mb-4">Starting Lineup</h3>
+                    <div className="flex flex-col gap-3 mb-4">
+                        <h3 className="text-2xl font-bold text-purple-400">Starting Lineup</h3>
+                        <AutoSetLineupToggle
+                            enabled={teamData?.autoSetLineupEnabled === true}
+                            disabled={isAutoSetSaving}
+                            onChange={setAutoSetLineupEnabled}
+                        />
+                    </div>
                     <div className="space-y-3 md:space-y-2">
                         {lineupDisplayOrder.map(slot => {
                             const playerId = teamData.roster?.lineup?.[slot] || null;

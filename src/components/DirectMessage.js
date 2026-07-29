@@ -10,6 +10,10 @@ import {
     setDoc,
 } from 'firebase/firestore';
 import { getModularFirestore } from '../config/firebaseModular.js';
+import {
+    NOTIFICATION_TYPES,
+    createLeagueNotifications,
+} from '../utils/leagueNotifications.js';
 import './DirectMessage.css';
 
 /**
@@ -19,7 +23,7 @@ import './DirectMessage.css';
  * @param {{ uid: string, displayName: string }} currentUser
  * @param {{ uid: string, displayName: string }} targetUser
  */
-export const DirectMessage = ({ currentUser, targetUser }) => {
+export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
     const [messages, setMessages] = useState([]);
     const [text, setText] = useState('');
     const [isSending, setIsSending] = useState(false);
@@ -102,6 +106,22 @@ export const DirectMessage = ({ currentUser, targetUser }) => {
                 senderId: currentUser.uid,
                 createdAt: serverTimestamp(),
             });
+
+            if (leagueId && targetUser?.uid) {
+                const senderLabel = currentUser.displayName || 'A manager';
+                await createLeagueNotifications(db, leagueId, {
+                    type: NOTIFICATION_TYPES.DIRECT_MESSAGE,
+                    recipientUserIds: [targetUser.uid],
+                    senderId: currentUser.uid,
+                    senderName: senderLabel,
+                    message: `${senderLabel} sent you a direct message.`,
+                    extra: {
+                        chatId,
+                        preview: trimmed.slice(0, 120),
+                    },
+                });
+            }
+
             setText('');
         } catch (submitError) {
             console.error('Error sending direct message:', submitError);

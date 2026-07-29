@@ -5,6 +5,7 @@ import { ConfirmationModal } from './ConfirmationModal.js';
 import {
     buildInitialLineup,
     buildStartingSlots,
+    buildLineupDisplayOrder,
     INITIAL_ROSTER_LIMITS,
     STANDARD_SCORING_RULES,
     inferDefenseFormat,
@@ -22,7 +23,9 @@ import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
 import { CommissionerRosterEditor } from './CommissionerRosterEditor.js';
 import { CommissionerTradeUndo } from './CommissionerTradeUndo.js';
+import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
 import { appId } from '../config/firebase.js';
+import { commitTeamAutoSetLineup } from '../utils/commitTeamAutoSetLineup.js';
 
 const firebase = window.firebase;
 
@@ -240,6 +243,39 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
         } catch (error) {
             console.error("Error updating team owner:", error);
             showMessage("Failed to update team owner.", "error");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleToggleTeamAutoSetLineup = async (teamId, nextEnabled) => {
+        if (!currentLeague?.id || !teamId) return;
+
+        setIsLoading(true);
+        try {
+            const result = await commitTeamAutoSetLineup({
+                leagueId: currentLeague.id,
+                teamId,
+                allPlayers,
+                rosterLimits: currentLeague?.settings?.rosterLimits || INITIAL_ROSTER_LIMITS,
+                slotOrder: buildLineupDisplayOrder(currentLeague?.settings?.startingSlots),
+                enabled: Boolean(nextEnabled),
+                applyLineup: Boolean(nextEnabled),
+            });
+            const teamName = teamsData.find((t) => t.id === teamId)?.teamName || 'Team';
+            if (result.enabled) {
+                showMessage(
+                    result.changes?.length
+                        ? `Auto-set lineup enabled for ${teamName} and applied ${result.changes.length} change(s).`
+                        : `Auto-set lineup enabled for ${teamName}.`,
+                    'success'
+                );
+            } else {
+                showMessage(`Auto-set lineup disabled for ${teamName}.`, 'success');
+            }
+        } catch (error) {
+            console.error('Error toggling auto-set lineup:', error);
+            showMessage(error?.message || 'Failed to update auto-set lineup.', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -829,7 +865,10 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
             />
 
             <div className="bg-emerald-900 p-6 rounded-lg shadow-lg border-2 border-emerald-700">
-                <h3 className="text-2xl font-bold text-purple-400 mb-4">Team Management</h3>
+                <h3 className="text-2xl font-bold text-purple-400 mb-2">Team Management</h3>
+                <p className="text-sm text-emerald-400 mb-4">
+                    Toggle auto-set lineup per team. When on, empty starters and OUT players are filled from the bench.
+                </p>
                 <div className="space-y-4">
                     {teamsData.map(team => (
                         <div key={team.id} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
@@ -855,6 +894,16 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                                 >
                                     Delete
                                 </button>
+                            </div>
+
+                            <div className="mb-4">
+                                <AutoSetLineupToggle
+                                    enabled={team.autoSetLineupEnabled === true}
+                                    disabled={isLoading}
+                                    onChange={(next) => handleToggleTeamAutoSetLineup(team.id, next)}
+                                    label="Auto-Set Lineup"
+                                    description="Commissioner control for this team. Managers can also change this on their Roster page."
+                                />
                             </div>
                             
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

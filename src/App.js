@@ -31,6 +31,10 @@ import {
     inviteRequiresLogin,
     joinLeagueAsUser,
 } from './utils/leagueInvite.js';
+import {
+    NOTIFICATION_TYPES,
+    defaultNotificationToast,
+} from './utils/leagueNotifications.js';
 
 // Capture invite before first paint / auth routing
 capturePendingInviteFromUrl();
@@ -67,13 +71,20 @@ const App = () => {
     const [teamsData, setTeamsData] = useState([]);
     const [allPlayers, setAllPlayers] = useState([]);
     const [unreadTradeNotifications, setUnreadTradeNotifications] = useState([]);
+    const [unreadChatNotifications, setUnreadChatNotifications] = useState([]);
+    const [unreadDmNotifications, setUnreadDmNotifications] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isProcessingInvite, setIsProcessingInvite] = useState(false);
     const [inviteLoginGate, setInviteLoginGate] = useState(false);
     const [isClearingInviteSession, setIsClearingInviteSession] = useState(false);
     const inviteProcessedRef = useRef(false);
     const inviteSignOutStartedRef = useRef(false);
-    const seenTradeNotificationIdsRef = useRef(new Set());
+    const seenNotificationIdsRef = useRef(new Set());
+    const activeTabRef = useRef(activeTab);
+
+    useEffect(() => {
+        activeTabRef.current = activeTab;
+    }, [activeTab]);
 
     const isLoadingData = (currentLeagueId && !currentLeague) || (currentTeamId && !currentTeam);
     const isCommissioner = isLeagueCommissioner(currentLeague, userId);
@@ -99,8 +110,10 @@ const App = () => {
     };
 
     useEffect(() => {
-        seenTradeNotificationIdsRef.current = new Set();
+        seenNotificationIdsRef.current = new Set();
         setUnreadTradeNotifications([]);
+        setUnreadChatNotifications([]);
+        setUnreadDmNotifications([]);
 
         if (!currentLeagueId || !userId) return undefined;
 
@@ -113,19 +126,33 @@ const App = () => {
         return onSnapshot(notificationsQuery, (snapshot) => {
             const unread = snapshot.docs
                 .map((notificationDoc) => ({ id: notificationDoc.id, ...notificationDoc.data() }))
-                .filter((notification) => notification.type === 'trade_proposed' && !notification.read);
+                .filter((notification) => !notification.read);
 
-            setUnreadTradeNotifications(unread);
+            const tradeUnread = unread.filter((n) => n.type === NOTIFICATION_TYPES.TRADE_PROPOSED);
+            const chatUnread = unread.filter((n) => n.type === NOTIFICATION_TYPES.LEAGUE_CHAT);
+            const dmUnread = unread.filter((n) => n.type === NOTIFICATION_TYPES.DIRECT_MESSAGE);
+
+            setUnreadTradeNotifications(tradeUnread);
+            setUnreadChatNotifications(chatUnread);
+            setUnreadDmNotifications(dmUnread);
 
             const newNotification = unread.find(
-                (notification) => !seenTradeNotificationIdsRef.current.has(notification.id)
+                (notification) => !seenNotificationIdsRef.current.has(notification.id)
             );
             unread.forEach((notification) => {
-                seenTradeNotificationIdsRef.current.add(notification.id);
+                seenNotificationIdsRef.current.add(notification.id);
             });
 
             if (newNotification) {
-                setMessage(newNotification.message || 'You received a new trade proposal.');
+                const tabForType = {
+                    [NOTIFICATION_TYPES.TRADE_PROPOSED]: 'trade',
+                    [NOTIFICATION_TYPES.LEAGUE_CHAT]: 'league-chat',
+                    [NOTIFICATION_TYPES.DIRECT_MESSAGE]: 'direct-messages',
+                }[newNotification.type];
+                if (tabForType && tabForType === activeTabRef.current) {
+                    return;
+                }
+                setMessage(defaultNotificationToast(newNotification));
                 setMessageType('success');
                 setTimeout(() => {
                     setMessage('');
@@ -133,25 +160,40 @@ const App = () => {
                 }, 6000);
             }
         }, (error) => {
-            console.error('Error listening for trade notifications:', error);
+            console.error('Error listening for league notifications:', error);
         });
     }, [currentLeagueId, userId]);
 
     useEffect(() => {
-        if (activeTab !== 'trade' || unreadTradeNotifications.length === 0 || !currentLeagueId) {
-            return;
+        if (!currentLeagueId) return;
+
+        let toMark = [];
+        if (activeTab === 'trade') {
+            toMark = unreadTradeNotifications;
+        } else if (activeTab === 'league-chat') {
+            toMark = unreadChatNotifications;
+        } else if (activeTab === 'direct-messages') {
+            toMark = unreadDmNotifications;
         }
 
+        if (!toMark.length) return;
+
         const modularDb = getModularFirestore();
-        Promise.all(unreadTradeNotifications.map((notification) => (
+        Promise.all(toMark.map((notification) => (
             updateDoc(
                 doc(modularDb, 'leagues', currentLeagueId, 'notifications', notification.id),
                 { read: true }
             )
         ))).catch((error) => {
-            console.error('Error marking trade notifications read:', error);
+            console.error('Error marking notifications read:', error);
         });
-    }, [activeTab, currentLeagueId, unreadTradeNotifications]);
+    }, [
+        activeTab,
+        currentLeagueId,
+        unreadTradeNotifications,
+        unreadChatNotifications,
+        unreadDmNotifications,
+    ]);
 
     // Re-capture invite on mount; pause league UI until invite is resolved
     useEffect(() => {
@@ -465,6 +507,8 @@ const App = () => {
                 showLeagueTabs={Boolean(currentLeagueId && currentTeamId)}
                 isCommissioner={isCommissioner}
                 unreadTradeCount={unreadTradeNotifications.length}
+                unreadChatCount={unreadChatNotifications.length}
+                unreadDmCount={unreadDmNotifications.length}
             />
 
             <main className="mobile-page max-w-7xl mx-auto w-full">
@@ -525,6 +569,7 @@ const App = () => {
                                     leagueId={currentLeague.id}
                                     senderId={userId}
                                     senderName={userDisplayName}
+                                    teamsData={teamsData}
                                 />
                             )}
                             {activeTab === 'direct-messages' && currentLeague && (
@@ -532,6 +577,7 @@ const App = () => {
                                     currentUserId={userId}
                                     currentUserDisplayName={userDisplayName}
                                     teamsData={teamsData}
+                                    leagueId={currentLeague.id}
                                 />
                             )}
                             {activeTab === 'trade' && (

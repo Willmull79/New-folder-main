@@ -8,6 +8,7 @@ export const DirectMessages = ({
     currentUserId,
     currentUserDisplayName,
     teamsData = [],
+    leagueId,
 }) => {
     const [targetUid, setTargetUid] = useState('');
 
@@ -65,7 +66,11 @@ export const DirectMessages = ({
             </div>
 
             {targetUser ? (
-                <DirectMessage currentUser={currentUser} targetUser={targetUser} />
+                <DirectMessage
+                    currentUser={currentUser}
+                    targetUser={targetUser}
+                    leagueId={leagueId}
+                />
             ) : (
                 <div className="bg-emerald-950 border border-emerald-700 rounded-lg p-8 text-center text-emerald-300">
                     Choose a manager above to open a private chat.

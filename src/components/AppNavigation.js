@@ -33,13 +33,37 @@ const mobileTabButtonClass = (isActive) => (
     }`
 );
 
+const UnreadBadge = ({ count, compact = false }) => {
+    if (!count) return null;
+    return (
+        <span
+            className={
+                compact
+                    ? 'ml-1 inline-flex min-w-4 h-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white'
+                    : 'ml-2 inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs text-white'
+            }
+            aria-label={`${count} unread notifications`}
+        >
+            {count > 9 ? '9+' : count}
+        </span>
+    );
+};
+
 export const AppNavigation = ({
     activeTab,
     setActiveTab,
     showLeagueTabs,
     isCommissioner,
     unreadTradeCount = 0,
+    unreadChatCount = 0,
+    unreadDmCount = 0,
 }) => {
+    const unreadByTab = {
+        trade: unreadTradeCount,
+        'league-chat': unreadChatCount,
+        'direct-messages': unreadDmCount,
+    };
+
     const tabs = showLeagueTabs
         ? [
             ...LEAGUE_TABS,
@@ -60,14 +84,7 @@ export const AppNavigation = ({
                                 className={tabButtonClass(activeTab === tab.id)}
                             >
                                 {tab.label}
-                                {tab.id === 'trade' && unreadTradeCount > 0 && (
-                                    <span
-                                        className="ml-2 inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs text-white"
-                                        aria-label={`${unreadTradeCount} unread trade proposals`}
-                                    >
-                                        {unreadTradeCount > 9 ? '9+' : unreadTradeCount}
-                                    </span>
-                                )}
+                                <UnreadBadge count={unreadByTab[tab.id] || 0} />
                             </button>
                         </li>
                     ))}
@@ -88,14 +105,7 @@ export const AppNavigation = ({
                                 className={mobileTabButtonClass(activeTab === tab.id)}
                             >
                                 {tab.shortLabel}
-                                {tab.id === 'trade' && unreadTradeCount > 0 && (
-                                    <span
-                                        className="ml-1 inline-flex min-w-4 h-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white"
-                                        aria-label={`${unreadTradeCount} unread trade proposals`}
-                                    >
-                                        {unreadTradeCount > 9 ? '9+' : unreadTradeCount}
-                                    </span>
-                                )}
+                                <UnreadBadge count={unreadByTab[tab.id] || 0} compact />
                             </button>
                         </li>
                     ))}

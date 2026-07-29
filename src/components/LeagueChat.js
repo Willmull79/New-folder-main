@@ -8,13 +8,17 @@ import {
     serverTimestamp,
 } from 'firebase/firestore';
 import { getModularFirestore } from '../config/firebaseModular.js';
+import {
+    NOTIFICATION_TYPES,
+    createLeagueNotifications,
+} from '../utils/leagueNotifications.js';
 import './LeagueChat.css';
 
 /**
  * Real-time league chat using the modular Firebase Firestore SDK.
  * Schema: leagues/{leagueId}/messages/{messageId}
  */
-export const LeagueChat = ({ leagueId, senderId, senderName }) => {
+export const LeagueChat = ({ leagueId, senderId, senderName, teamsData = [] }) => {
     const [messages, setMessages] = useState([]);
     const [text, setText] = useState('');
     const [isSending, setIsSending] = useState(false);
@@ -64,12 +68,26 @@ export const LeagueChat = ({ leagueId, senderId, senderName }) => {
         try {
             const db = getModularFirestore();
             const messagesRef = collection(db, 'leagues', leagueId, 'messages');
+            const displayName = senderName || 'Manager';
             await addDoc(messagesRef, {
                 text: trimmed,
                 senderId,
-                senderName: senderName || 'Manager',
+                senderName: displayName,
                 createdAt: serverTimestamp(),
             });
+
+            const recipientUserIds = (teamsData || [])
+                .map((team) => team?.ownerId)
+                .filter(Boolean);
+            await createLeagueNotifications(db, leagueId, {
+                type: NOTIFICATION_TYPES.LEAGUE_CHAT,
+                recipientUserIds,
+                senderId,
+                senderName: displayName,
+                message: `${displayName} posted in league chat.`,
+                extra: { preview: trimmed.slice(0, 120) },
+            });
+
             setText('');
         } catch (submitError) {
             console.error('Error sending chat message:', submitError);
