@@ -51,6 +51,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
         if (!db || !currentLeague?.id) return undefined;
 
         const teamsUnsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
+            .limit(50)
             .onSnapshot((snapshot) => {
                 const teams = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
                 setTeamsData(teams);
@@ -60,6 +61,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
         const tradesUnsubscribe = db.collection(`leagues/${currentLeague.id}/trades`)
             .where('status', '==', 'pending')
+            .limit(50)
             .onSnapshot((snapshot) => {
                 const trades = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
                 setPendingTrades(trades);

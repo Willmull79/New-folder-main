@@ -1,6 +1,10 @@
 """
-Daily ESPN projected points sync → Firestore `players` collection.
+Daily NFL rankings sync → single Firestore rankings doc.
 Runs at 3:00 AM Eastern via Cloud Scheduler (2nd gen).
+
+Builds the FULL fantasy-eligible Sleeper player pool (~1900), merges ESPN
+projected points where available, and writes everything to rankings/master_list
+as one array (1 client read instead of thousands).
 """
 
 import json
@@ -33,7 +37,13 @@ ESPN_FILTER = {
         },
     }
 }
-BATCH_SIZE = 400
+
+OFFENSIVE_POSITIONS = {"QB", "RB", "WR", "TE", "FB", "K"}
+DEFENSIVE_POSITIONS = {"DEF", "DL", "DE", "DT", "NT", "LB", "ILB", "OLB", "DB", "CB"}
+EXCLUDED_POSITIONS = {"FS", "SS"}
+ELIGIBLE_POSITIONS = OFFENSIVE_POSITIONS | DEFENSIVE_POSITIONS
+
+RANKINGS_DOC_PATH = ("rankings", "master_list")
 
 
 def extract_projected_points(entry):
@@ -62,6 +72,54 @@ def extract_projected_points(entry):
     return None
 
 
+def is_fantasy_eligible(player):
+    position = player.get("position")
+    if not position or position in EXCLUDED_POSITIONS:
+        return False
+    if position not in ELIGIBLE_POSITIONS:
+        return False
+    if player.get("status") != "Active":
+        return False
+    if player.get("depth_chart_order") is None:
+        return False
+    team = str(player.get("team") or "").strip().upper()
+    if not team or team in {"FA", "FREE AGENT"}:
+        return False
+    return True
+
+
+def sleeper_to_row(player, sleeper_id):
+    first_name = (player.get("first_name") or "").strip()
+    last_name = (player.get("last_name") or "").strip()
+    name = f"{first_name} {last_name}".strip() or player.get("full_name") or "Unknown"
+    team = player.get("team") or "FA"
+    search_rank = player.get("search_rank")
+    try:
+        search_rank = int(search_rank) if search_rank is not None else 9999
+    except (TypeError, ValueError):
+        search_rank = 9999
+
+    espn_id = player.get("espn_id")
+    return {
+        "id": str(sleeper_id),
+        "name": name,
+        "first_name": first_name,
+        "last_name": last_name,
+        "team": team,
+        "nflTeam": team,
+        "position": player.get("position") or "",
+        "espn_id": str(espn_id) if espn_id is not None and espn_id != "" else None,
+        "projectedPoints": None,
+        "rank": search_rank if search_rank > 0 else 9999,
+        "salary": 1,
+        "status": player.get("status") or "Active",
+        "depth_chart_order": player.get("depth_chart_order"),
+        "age": player.get("age"),
+        "years_exp": player.get("years_exp"),
+        "rookie_year": player.get("rookie_year"),
+    }
+
+
 @scheduler_fn.on_schedule(
     schedule="0 3 * * *",
     timezone=scheduler_fn.Timezone("America/New_York"),
@@ -71,24 +129,30 @@ def extract_projected_points(entry):
 def sync_espn_projections(event: scheduler_fn.ScheduledEvent) -> None:
     db = firestore.client()
 
-    # 1) Sleeper master player list
+    # 1) Full Sleeper NFL player map
     print("Fetching Sleeper NFL players...")
     sleeper_resp = requests.get(SLEEPER_PLAYERS_URL, timeout=120)
     sleeper_resp.raise_for_status()
     sleeper_players = sleeper_resp.json()
     print(f"Loaded {len(sleeper_players)} Sleeper players")
 
-    # espn_id (string) → Sleeper player record
-    sleeper_by_espn_id = {}
+    # 2) Build full fantasy-eligible pool (~1900), keyed by sleeper id
+    pool_by_id = {}
     for sleeper_id, player in sleeper_players.items():
-        espn_id = player.get("espn_id")
-        if espn_id is None or espn_id == "":
+        if not is_fantasy_eligible(player):
             continue
-        sleeper_by_espn_id[str(espn_id)] = {**player, "player_id": sleeper_id}
+        row = sleeper_to_row(player, sleeper_id)
+        pool_by_id[row["id"]] = row
 
-    print(f"Built ESPN cross-ref map with {len(sleeper_by_espn_id)} entries")
+    print(f"Fantasy-eligible Sleeper pool: {len(pool_by_id)}")
 
-    # 2) ESPN projected points
+    # espn_id → sleeper id for projection merge
+    sleeper_id_by_espn_id = {}
+    for sleeper_id, row in pool_by_id.items():
+        if row.get("espn_id"):
+            sleeper_id_by_espn_id[str(row["espn_id"])] = sleeper_id
+
+    # 3) ESPN projected points (enrich only — do not shrink the pool)
     print("Fetching ESPN projected points...")
     espn_resp = requests.get(
         ESPN_URL,
@@ -99,94 +163,62 @@ def sync_espn_projections(event: scheduler_fn.ScheduledEvent) -> None:
         timeout=120,
     )
     espn_resp.raise_for_status()
-    espn_payload = espn_resp.json()
-    espn_players = espn_payload.get("players") or []
+    espn_players = (espn_resp.json() or {}).get("players") or []
     print(f"Loaded {len(espn_players)} ESPN player rows")
 
-    # 3) Match ESPN → Sleeper, collect rows with projections
-    matched = []
-    skipped = 0
-
+    espn_enriched = 0
+    espn_skipped = 0
     for entry in espn_players:
         espn_id = entry.get("id")
         if espn_id is None:
-            player_obj = entry.get("player") or {}
-            espn_id = player_obj.get("id")
+            espn_id = (entry.get("player") or {}).get("id")
         if espn_id is None:
-            skipped += 1
+            espn_skipped += 1
             continue
 
         projected_points = extract_projected_points(entry)
         if projected_points is None:
-            skipped += 1
+            espn_skipped += 1
             continue
 
-        sleeper = sleeper_by_espn_id.get(str(espn_id))
-        if not sleeper:
-            skipped += 1
+        sleeper_id = sleeper_id_by_espn_id.get(str(espn_id))
+        if not sleeper_id:
+            espn_skipped += 1
             continue
 
-        sleeper_id = str(sleeper.get("player_id"))
-        first_name = (sleeper.get("first_name") or "").strip()
-        last_name = (sleeper.get("last_name") or "").strip()
-        name = f"{first_name} {last_name}".strip() or sleeper.get("full_name") or "Unknown"
-        team = sleeper.get("team") or "FA"
-        position = sleeper.get("position") or ""
+        pool_by_id[sleeper_id]["projectedPoints"] = float(projected_points)
+        espn_enriched += 1
 
-        matched.append(
-            {
-                "sleeper_id": sleeper_id,
-                "name": name,
-                "first_name": first_name,
-                "last_name": last_name,
-                "team": team,
-                "position": position,
-                "espn_id": str(espn_id),
-                "projectedPoints": float(projected_points),
-            }
+    # 4) Sort: ESPN proj first (desc), then Sleeper search_rank, then name
+    ranked = list(pool_by_id.values())
+    ranked.sort(
+        key=lambda row: (
+            0 if row.get("projectedPoints") is not None else 1,
+            -(row["projectedPoints"] or 0),
+            row.get("rank") or 9999,
+            row.get("name") or "",
         )
-
-    # 4) Rank by ESPN projected points (1 = highest)
-    matched.sort(key=lambda row: row["projectedPoints"], reverse=True)
+    )
+    for index, row in enumerate(ranked):
+        # Keep ESPN-driven display rank for projected players; others keep relative order
+        row["rank"] = index + 1
 
     now = datetime.now(timezone.utc).isoformat()
-    batch = db.batch()
-    pending = 0
-    updated = 0
-
-    for index, row in enumerate(matched):
-        rank = index + 1
-        doc_ref = db.collection("players").document(row["sleeper_id"])
-        batch.set(
-            doc_ref,
-            {
-                "id": row["sleeper_id"],
-                "name": row["name"],
-                "first_name": row["first_name"],
-                "last_name": row["last_name"],
-                "team": row["team"],
-                "nflTeam": row["team"],
-                "position": row["position"],
-                "espn_id": row["espn_id"],
-                "projectedPoints": row["projectedPoints"],
-                "rank": rank,
-                "updatedAt": now,
-            },
-            merge=True,
-        )
-        pending += 1
-        updated += 1
-
-        if pending >= BATCH_SIZE:
-            batch.commit()
-            print(f"Committed batch ({updated} players written so far)")
-            batch = db.batch()
-            pending = 0
-
-    if pending:
-        batch.commit()
+    rankings_ref = db.collection(RANKINGS_DOC_PATH[0]).document(RANKINGS_DOC_PATH[1])
+    rankings_ref.set(
+        {
+            "players": ranked,
+            "count": len(ranked),
+            "espnEnriched": espn_enriched,
+            "season": 2026,
+            "source": "sleeper+espn",
+            "updatedAt": now,
+        },
+        merge=False,
+    )
 
     print(
-        f"Done. updated={updated} skipped={skipped} "
+        f"Done. wrote rankings/master_list count={len(ranked)} "
+        f"espn_enriched={espn_enriched} espn_skipped={espn_skipped} "
         f"job={event.job_name} schedule_time={event.schedule_time}"
     )

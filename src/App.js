@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, Suspense } from 'react';
 import {
     collection,
     doc,
+    limit,
     onSnapshot,
     query,
     updateDoc,
@@ -9,18 +10,17 @@ import {
 } from 'firebase/firestore';
 import { useFirebase } from './contexts/FirebaseContext.js';
 import { getModularFirestore } from './config/firebaseModular.js';
-import { AuthScreen } from './components/AuthScreen.js';
+import { LandingPage } from './components/LandingPage.js';
 import { LeagueSelector } from './components/LeagueSelector.js';
 import { Avatar } from './components/Avatar.js';
 import { AppNavigation } from './components/AppNavigation.js';
 import nflPlayerService, {
     fetchPlayersFromFirestore,
-    readPlayersFromSessionCache,
-    writePlayersToSessionCache,
+    readPlayersFromCache,
+    writePlayersToCache,
 } from './utils/nflPlayerService.js';
 import draftService from './utils/draftService.js';
 import { appId } from './config/firebase.js';
-import { isOnActiveNflRoster } from './utils/helpers.js';
 import { isLeagueCommissioner } from './constants/leagueDefaults.js';
 import {
     capturePendingInviteFromUrl,
@@ -35,6 +35,13 @@ import {
     NOTIFICATION_TYPES,
     defaultNotificationToast,
 } from './utils/leagueNotifications.js';
+import {
+    clearPendingSubscribe,
+    goToSubscribePath,
+    hasPendingSubscribe,
+    isSubscribePath,
+} from './utils/subscribeGate.js';
+import { SubscribePage } from './components/SubscribePage.js';
 
 // Capture invite before first paint / auth routing
 capturePendingInviteFromUrl();
@@ -45,6 +52,7 @@ const DraftCenter = React.lazy(() => import('./components/DraftCenter.js'));
 const TradeCenter = React.lazy(() => import('./components/TradeCenter.js').then(module => ({ default: module.TradeCenter })));
 const WaiverWire = React.lazy(() => import('./components/WaiverWire.js').then(module => ({ default: module.WaiverWire })));
 const Standings = React.lazy(() => import('./components/Standings.js'));
+const Matchups = React.lazy(() => import('./components/Matchups.js').then(module => ({ default: module.Matchups })));
 const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
 const AccountProfile = React.lazy(() => import('./components/AccountProfile.js'));
@@ -95,6 +103,35 @@ const App = () => {
         setTimeout(() => { setMessage(''); setMessageType(''); }, 4000);
     };
 
+    // Stripe Checkout / Portal return: ?billing=success|cancel|manage
+    useEffect(() => {
+        if (!isAuthReady || !userId) return undefined;
+
+        const params = new URLSearchParams(window.location.search);
+        const billing = params.get('billing');
+        if (!billing) return undefined;
+
+        if (billing === 'success') {
+            clearPendingSubscribe();
+            setActiveTab('leagues');
+            showMessage('Subscription updated. It may take a moment to reflect.', 'success');
+            params.delete('billing');
+            params.delete('session_id');
+            window.history.replaceState({}, '', `/${params.toString() ? `?${params}` : ''}`);
+        } else if (billing === 'cancel') {
+            showMessage('Checkout canceled — no charge was made.', 'error');
+            goToSubscribePath();
+        } else {
+            setActiveTab('profile');
+            params.delete('billing');
+            params.delete('session_id');
+            const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
+            window.history.replaceState({}, '', next);
+        }
+        return undefined;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isAuthReady, userId]);
+
     const handleLeagueSelected = (leagueId, teamId) => {
         setCurrentLeagueId(leagueId);
         setCurrentTeamId(teamId);
@@ -120,7 +157,8 @@ const App = () => {
         const modularDb = getModularFirestore();
         const notificationsQuery = query(
             collection(modularDb, 'leagues', currentLeagueId, 'notifications'),
-            where('recipientUserId', '==', userId)
+            where('recipientUserId', '==', userId),
+            limit(50)
         );
 
         return onSnapshot(notificationsQuery, (snapshot) => {
@@ -361,7 +399,7 @@ const App = () => {
         }
     }, [allPlayers]);
 
-    // Master NFL player list: sessionStorage first, then one-time Firestore .get()
+    // Master NFL rankings: 30-min localStorage cache, else one doc read (rankings/master_list)
     useEffect(() => {
         if (!db) return undefined;
 
@@ -369,25 +407,25 @@ const App = () => {
 
         const loadPlayers = async () => {
             try {
-                const cachedPlayers = readPlayersFromSessionCache();
-                if (cachedPlayers?.length) {
+                const cached = readPlayersFromCache();
+                if (cached?.players?.length) {
                     if (!cancelled) {
-                        setAllPlayers(cachedPlayers.filter(isOnActiveNflRoster));
+                        setAllPlayers(cached.players);
                     }
                     return;
                 }
 
                 const firestorePlayers = await fetchPlayersFromFirestore(db);
                 if (firestorePlayers.length) {
-                    writePlayersToSessionCache(firestorePlayers);
+                    writePlayersToCache(firestorePlayers);
                     if (!cancelled) {
                         setAllPlayers(firestorePlayers);
                     }
                     return;
                 }
 
-                // Fallback if Firestore players collection is empty
-                const players = await nflPlayerService.getAllPlayers();
+                // Fallback if rankings/master_list is empty
+                const players = await nflPlayerService.getAllPlayers({ forceRefresh: true });
                 if (!cancelled) {
                     setAllPlayers(players);
                 }
@@ -422,19 +460,28 @@ const App = () => {
         );
     }
 
-    // Invitees who are not logged in must register / log in first
+    // Public landing (Stripe website verification) + auth for logged-out users
     if (!userId || !auth?.currentUser || inviteLoginGate) {
         return (
-            <AuthScreen
+            <LandingPage
                 showMessage={showMessage}
                 hasPendingInvite={hasPendingInvite() || inviteLoginGate}
-                onAuthSuccess={() => {
+                forceAuth={Boolean(inviteLoginGate || hasPendingInvite())}
+                onAuthSuccess={({ registered } = {}) => {
                     clearInviteLoginGate();
                     setInviteLoginGate(false);
                     inviteSignOutStartedRef.current = false;
+                    if (registered) {
+                        goToSubscribePath();
+                    }
                 }}
             />
         );
+    }
+
+    // New registrations go to subscribe/pricing before the main app
+    if (hasPendingSubscribe() || isSubscribePath()) {
+        return <SubscribePage showMessage={showMessage} />;
     }
 
     if (isProcessingInvite) {
@@ -536,6 +583,13 @@ const App = () => {
                             {activeTab === 'standings' && currentLeague && (
                                 <Standings
                                     currentLeague={currentLeague}
+                                    showMessage={showMessage}
+                                />
+                            )}
+                            {activeTab === 'matchups' && currentLeague && (
+                                <Matchups
+                                    currentLeague={currentLeague}
+                                    currentTeam={currentTeam}
                                     showMessage={showMessage}
                                 />
                             )}

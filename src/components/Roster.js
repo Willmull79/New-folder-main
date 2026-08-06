@@ -5,6 +5,10 @@ import { getPlayerDetails, getAvailablePlayers, formatProjectedPoints, getPlayer
 import { useAutoSetLineup } from '../hooks/useAutoSetLineup.js';
 import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
 import {
+    getCachedWeekProjections,
+    getWeeklyProjectedPoints,
+} from '../utils/backgroundScoring.js';
+import {
     buildLineupDisplayOrder,
     INITIAL_ROSTER_LIMITS,
     isDefensivePlayerPosition,
@@ -24,14 +28,23 @@ const playerInitials = (name = '') => {
     return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
 };
 
+const formatWeekProj = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '0.0';
+    return n.toFixed(1);
+};
+
 const RosterPlayerSlot = ({
     slotLabel,
     slotLabelClassName = 'text-purple-300',
     player,
     leagueSettings = {},
+    weekProjection = 0,
+    projectionWeek = null,
     actions = null,
 }) => {
     const showSalary = player && isPlayerSalaryEnabled(leagueSettings);
+    const projLabel = projectionWeek != null ? `Week ${projectionWeek} Proj` : 'Week Proj';
 
     if (!player) {
         return (
@@ -77,6 +90,12 @@ const RosterPlayerSlot = ({
                         <p className="text-[11px] uppercase tracking-wide text-emerald-400">NFL Team</p>
                         <p className="text-sm font-semibold text-white">{player.nflTeam || '—'}</p>
                     </div>
+                    <div className="bg-emerald-950/50 rounded-md px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-wide text-emerald-400">{projLabel}</p>
+                        <p className="text-sm font-semibold text-yellow-300 tabular-nums">
+                            {formatWeekProj(weekProjection)}
+                        </p>
+                    </div>
                     {showSalary && (
                         <div className="bg-emerald-950/50 rounded-md px-3 py-2">
                             <p className="text-[11px] uppercase tracking-wide text-emerald-400">Salary</p>
@@ -101,19 +120,27 @@ const RosterPlayerSlot = ({
             </div>
 
             {/* Desktop row layout */}
-            <div className="hidden md:flex bg-emerald-800 p-3 rounded-md items-center justify-between min-h-[50px]">
-                <div className="flex items-center gap-4 truncate min-w-0">
+            <div className="hidden md:flex bg-emerald-800 p-3 rounded-md items-center justify-between min-h-[50px] gap-3">
+                <div className="flex items-center gap-4 truncate min-w-0 flex-1">
                     <span className={`font-bold w-20 flex-shrink-0 ${slotLabelClassName}`}>{slotLabel}</span>
                     <div className="h-8 w-8 rounded-full bg-emerald-950 border border-emerald-600 flex items-center justify-center text-xs font-bold text-emerald-100 flex-shrink-0">
                         {playerInitials(player.name)}
                     </div>
                     <span className="truncate">{formatPlayerLabel(player, leagueSettings)}</span>
                 </div>
-                {actions && (
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                        {actions}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="text-right min-w-[4.5rem]">
+                        <p className="text-[10px] uppercase tracking-wide text-emerald-400 leading-none">{projLabel}</p>
+                        <p className="text-sm font-semibold text-yellow-300 tabular-nums">
+                            {formatWeekProj(weekProjection)}
+                        </p>
                     </div>
-                )}
+                    {actions && (
+                        <div className="flex items-center gap-2">
+                            {actions}
+                        </div>
+                    )}
+                </div>
             </div>
         </>
     );
@@ -126,9 +153,12 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
     const [searchQuery, setSearchQuery] = useState('');
     const [bidAmount, setBidAmount] = useState(1);
     const [waiverPosition, setWaiverPosition] = useState(1);
+    const [weekProjectionsByPlayer, setWeekProjectionsByPlayer] = useState({});
+    const [projectionWeek, setProjectionWeek] = useState(null);
     const playerSelectRef = useRef(null);
     const rosterLimits = currentLeague?.settings?.rosterLimits || INITIAL_ROSTER_LIMITS;
     const leagueSettings = currentLeague?.settings || {};
+    const scoringRules = leagueSettings.scoringRules || {};
     const lineupDisplayOrder = buildLineupDisplayOrder(currentLeague?.settings?.startingSlots);
     const isAuctionComplete = currentLeague?.auction?.status === 'complete';
     const useFaabWaivers = isFaabWaiver(leagueSettings);
@@ -145,6 +175,34 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
     useEffect(() => {
         setNewTeamName(teamData.teamName || '');
     }, [teamData.teamName]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadWeekProjections = async () => {
+            try {
+                const { weekContext, projectionsByPlayer } = await getCachedWeekProjections();
+                if (cancelled) return;
+                setWeekProjectionsByPlayer(projectionsByPlayer || {});
+                setProjectionWeek(weekContext?.displayWeek ?? weekContext?.week ?? null);
+            } catch (error) {
+                console.error('Error loading weekly projections for roster:', error);
+                if (!cancelled) {
+                    setWeekProjectionsByPlayer({});
+                    setProjectionWeek(null);
+                }
+            }
+        };
+
+        loadWeekProjections();
+        return () => {
+            cancelled = true;
+        };
+    }, [currentLeague?.id]);
+
+    const resolveWeekProjection = (playerId) => (
+        getWeeklyProjectedPoints(playerId, weekProjectionsByPlayer, scoringRules)
+    );
 
     const handleUpdateTeamName = async () => {
         if (!db || !teamData?.id || !newTeamName.trim()) return showMessage("Team name cannot be empty.", "error");
@@ -416,6 +474,8 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                     slotLabel={formatLineupSlotLabel(slot)}
                                     player={player}
                                     leagueSettings={leagueSettings}
+                                    weekProjection={resolveWeekProjection(playerId)}
+                                    projectionWeek={projectionWeek}
                                     actions={player ? (
                                         <>
                                             <PlayerActions playerId={playerId} from={slot} />
@@ -440,6 +500,8 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                         slotLabel={`Bench ${index + 1}`}
                                         player={player}
                                         leagueSettings={leagueSettings}
+                                        weekProjection={resolveWeekProjection(playerId)}
+                                        projectionWeek={projectionWeek}
                                         actions={player ? (
                                             <>
                                                 <PlayerActions playerId={playerId} from="bench" />
@@ -464,6 +526,8 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                         slotLabelClassName="text-red-300"
                                         player={player}
                                         leagueSettings={leagueSettings}
+                                        weekProjection={resolveWeekProjection(playerId)}
+                                        projectionWeek={projectionWeek}
                                         actions={player ? (
                                             <>
                                                 <PlayerActions playerId={playerId} from="ir" />

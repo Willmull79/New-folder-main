@@ -57,6 +57,7 @@ const LiveScores = ({
         }
 
         const unsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
+            .limit(50)
             .onSnapshot((snapshot) => {
                 const teams = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
                 setTeamsData(teams);

@@ -37,6 +37,7 @@ export const CommissionerTradeUndo = ({
 
         const unsubscribe = db.collection(`leagues/${currentLeague.id}/trades`)
             .where('status', '==', 'accepted')
+            .limit(50)
             .onSnapshot((snapshot) => {
                 const trades = snapshot.docs.map((docSnap) => ({
                     id: docSnap.id,

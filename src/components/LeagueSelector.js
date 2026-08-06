@@ -35,6 +35,7 @@ export const LeagueSelector = ({
         // (matches prior UX and hides leftover league docs with no teams)
         const unsubscribe = db.collection('leagues')
             .where('memberIds', 'array-contains', userId)
+            .limit(50)
             .onSnapshot(async (leagueSnapshot) => {
                 const userLeaguesData = [];
 

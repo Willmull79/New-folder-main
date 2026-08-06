@@ -19,10 +19,10 @@ import {
 } from '../utils/leagueNotifications.js';
 import './DirectMessage.css';
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 50;
 
 /**
- * One-on-one DMs. Newest 100 live; older via pagination.
+ * One-on-one DMs. Newest 50 live; older via pagination.
  */
 export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
     const [messages, setMessages] = useState([]);

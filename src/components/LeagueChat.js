@@ -17,11 +17,11 @@ import {
 } from '../utils/leagueNotifications.js';
 import './LeagueChat.css';
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 50;
 
 /**
  * Real-time league chat.
- * Newest 100 via live query; older history via "Load older messages".
+ * Newest 50 via live query; older history via "Load older messages".
  */
 export const LeagueChat = ({ leagueId, senderId, senderName, teamsData = [] }) => {
     const [messages, setMessages] = useState([]);

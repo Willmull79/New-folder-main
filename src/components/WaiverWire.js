@@ -25,6 +25,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
         // Listen to waiver claims
         const waiverUnsubscribe = db.collection(`leagues/${currentLeague.id}/waivers`)
             .orderBy('createdAt', 'desc')
+            .limit(50)
             .onSnapshot(snapshot => {
                 const claims = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setWaiverClaims(claims);
@@ -34,6 +35,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
 
         // Listen to teams in the league subcollection
         const teamsUnsubscribe = db.collection(`leagues/${currentLeague.id}/teams`)
+            .limit(50)
             .onSnapshot(snapshot => {
                 const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setTeamsData(teams);

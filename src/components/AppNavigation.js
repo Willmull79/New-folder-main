@@ -7,6 +7,7 @@ const LEAGUE_TABS = [
     { id: 'waiver-wire', label: 'Waiver Wire', shortLabel: 'Waivers' },
     { id: 'trade', label: 'Trade', shortLabel: 'Trade' },
     { id: 'standings', label: 'Standings', shortLabel: 'Standings' },
+    { id: 'matchups', label: 'Matchups', shortLabel: 'Matchups' },
     { id: 'live-scores', label: 'Live Scores', shortLabel: 'Scores' },
     { id: 'league-dues', label: 'League Dues', shortLabel: 'Dues' },
     { id: 'league-chat', label: 'League Chat', shortLabel: 'Chat' },

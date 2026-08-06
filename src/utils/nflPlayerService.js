@@ -1,4 +1,4 @@
-// NFL Player Service - Firestore one-time reads + sessionStorage, with Sleeper fallback
+// NFL Player Service — rankings/master_list (1 read) + 30-min localStorage cache
 import { FALLBACK_NFL_PLAYERS } from '../data/fallbackPlayers.js';
 import { isOnActiveNflRoster } from './helpers.js';
 import {
@@ -7,11 +7,17 @@ import {
     saveSleeperPlayersToCache,
 } from './sleeperPlayerService.js';
 
+export const RANKINGS_COLLECTION = 'rankings';
+export const RANKINGS_DOC_ID = 'master_list';
+export const PLAYERS_CACHE_KEY = 'nfl_rankings_master_v2';
+export const PLAYERS_CACHE_STALE_MS = 30 * 60 * 1000; // 30 minutes
+
+/** @deprecated Use PLAYERS_CACHE_KEY — kept for one-time migration cleanup */
 export const SESSION_PLAYERS_CACHE_KEY = 'nfl_master_players_session_v2';
 
-export const normalizeFirestorePlayer = (doc) => {
-    const data = typeof doc.data === 'function' ? doc.data() : (doc || {});
-    const id = doc.id || data.id;
+export const normalizeFirestorePlayer = (docOrData, fallbackId = null) => {
+    const data = typeof docOrData?.data === 'function' ? docOrData.data() : (docOrData || {});
+    const id = docOrData?.id || data.id || fallbackId;
     const firstName = (data.first_name || '').trim();
     const lastName = (data.last_name || '').trim();
     const fullName = (data.name || `${firstName} ${lastName}`).trim() || 'Unknown';
@@ -36,81 +42,138 @@ export const normalizeFirestorePlayer = (doc) => {
     };
 };
 
-export const readPlayersFromSessionCache = () => {
+const normalizeRankingsList = (players = []) => (
+    players
+        .map((player) => normalizeFirestorePlayer(player, player?.id))
+        .filter(isOnActiveNflRoster)
+);
+
+export const readPlayersFromCache = () => {
     try {
-        const cached = sessionStorage.getItem(SESSION_PLAYERS_CACHE_KEY);
-        if (!cached) return null;
-        const parsed = JSON.parse(cached);
-        if (!Array.isArray(parsed) || !parsed.length) return null;
-        return parsed;
+        const raw = localStorage.getItem(PLAYERS_CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const fetchedAt = Number(parsed?.fetchedAt);
+        const players = Array.isArray(parsed?.players) ? parsed.players : null;
+        if (!players?.length || !Number.isFinite(fetchedAt)) return null;
+
+        const ageMs = Date.now() - fetchedAt;
+        if (ageMs < 0 || ageMs > PLAYERS_CACHE_STALE_MS) {
+            return null;
+        }
+
+        return {
+            players: normalizeRankingsList(players),
+            fetchedAt,
+            ageMs,
+            stale: false,
+        };
     } catch (error) {
-        console.warn('Failed to read player session cache:', error);
+        console.warn('Failed to read player rankings cache:', error);
         return null;
     }
 };
 
-export const writePlayersToSessionCache = (players) => {
+export const writePlayersToCache = (players) => {
     try {
-        sessionStorage.setItem(SESSION_PLAYERS_CACHE_KEY, JSON.stringify(players));
+        localStorage.setItem(
+            PLAYERS_CACHE_KEY,
+            JSON.stringify({
+                players,
+                fetchedAt: Date.now(),
+            })
+        );
     } catch (error) {
-        console.warn('Failed to write player session cache:', error);
+        console.warn('Failed to write player rankings cache:', error);
     }
 };
 
-/** One-time Firestore .get() for the master players collection (no realtime listener). */
+/** @deprecated Prefer readPlayersFromCache (30-min localStorage). */
+export const readPlayersFromSessionCache = () => {
+    const fresh = readPlayersFromCache();
+    if (fresh?.players?.length) return fresh.players;
+    return null;
+};
+
+/** @deprecated Prefer writePlayersToCache. */
+export const writePlayersToSessionCache = (players) => {
+    writePlayersToCache(players);
+};
+
+/**
+ * One Firestore document read: rankings/master_list.
+ * Returns [] if the doc is missing or empty.
+ */
 export const fetchPlayersFromFirestore = async (db) => {
     if (!db) return [];
-    const snapshot = await db.collection('players').get();
-    if (snapshot.empty) return [];
-    return snapshot.docs
-        .map(normalizeFirestorePlayer)
-        .filter(isOnActiveNflRoster);
+
+    const snap = await db.collection(RANKINGS_COLLECTION).doc(RANKINGS_DOC_ID).get();
+    if (!snap.exists) return [];
+
+    const data = snap.data() || {};
+    const players = normalizeRankingsList(data.players || []);
+    return players;
 };
 
 class NFLPlayerService {
     constructor() {
         this.players = [];
         this.lastUpdate = null;
-        this.updateInterval = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        this.updateInterval = 24 * 60 * 60 * 1000;
         this.cacheKey = 'nfl_players_cache';
         this.lastUpdateKey = 'nfl_players_last_update';
-        this.db = null; // Will be set by setFirebaseDB
+        this.db = null;
         this.baseUrl = 'https://us-central1-dynasty-420.cloudfunctions.net';
+        this.inFlightPromise = null;
     }
 
-    // Set Firebase database reference
     setFirebaseDB(db) {
         this.db = db;
     }
 
-    // Check if we need to update player data (daily)
     shouldUpdate() {
         const lastUpdate = localStorage.getItem(this.lastUpdateKey);
         if (!lastUpdate) return true;
-
-        const lastUpdateDate = new Date(lastUpdate);
-        const now = new Date();
-        const hoursSinceUpdate = (now - lastUpdateDate) / (1000 * 60 * 60);
-
+        const hoursSinceUpdate = (Date.now() - new Date(lastUpdate).getTime()) / (1000 * 60 * 60);
         return hoursSinceUpdate >= 24;
     }
 
-    // Drop FA / unrostered players (also cleans older caches)
     keepRosteredPlayersOnly() {
         this.players = (this.players || []).filter(isOnActiveNflRoster);
     }
 
-    // Get all NFL players — sessionStorage first, then Firestore .get(), then Sleeper fallback
+    /**
+     * Get rankings with a 30-minute stale-time guard.
+     * Tab navigation reuses memory/localStorage — no Firestore read while fresh.
+     */
     async getAllPlayers({ forceRefresh = false } = {}) {
+        if (!forceRefresh && this.players?.length) {
+            this.keepRosteredPlayersOnly();
+            return this.players;
+        }
+
         if (!forceRefresh) {
-            const sessionCached = readPlayersFromSessionCache();
-            if (sessionCached?.length) {
-                this.players = sessionCached;
+            const cached = readPlayersFromCache();
+            if (cached?.players?.length) {
+                this.players = cached.players;
                 this.keepRosteredPlayersOnly();
                 return this.players;
             }
         }
 
+        if (this.inFlightPromise && !forceRefresh) {
+            return this.inFlightPromise;
+        }
+
+        this.inFlightPromise = this._loadPlayers(forceRefresh)
+            .finally(() => {
+                this.inFlightPromise = null;
+            });
+
+        return this.inFlightPromise;
+    }
+
+    async _loadPlayers(forceRefresh = false) {
         if (this.db) {
             try {
                 const firestorePlayers = await fetchPlayersFromFirestore(this.db);
@@ -118,13 +181,12 @@ class NFLPlayerService {
                     this.players = firestorePlayers;
                     this.lastUpdate = new Date();
                     localStorage.setItem(this.lastUpdateKey, this.lastUpdate.toISOString());
-                    localStorage.setItem(this.cacheKey, JSON.stringify(this.players));
-                    writePlayersToSessionCache(this.players);
+                    writePlayersToCache(this.players);
                     this.keepRosteredPlayersOnly();
                     return this.players;
                 }
             } catch (error) {
-                console.error('Error loading players from Firestore:', error);
+                console.error('Error loading rankings/master_list from Firestore:', error);
             }
         }
 
@@ -135,12 +197,11 @@ class NFLPlayerService {
         }
         this.keepRosteredPlayersOnly();
         if (this.players.length) {
-            writePlayersToSessionCache(this.players);
+            writePlayersToCache(this.players);
         }
         return this.players;
     }
 
-    // Update player data from Sleeper API
     async updatePlayerData(forceRefresh = false) {
         try {
             console.log('Updating NFL player data from Sleeper API...');
@@ -148,7 +209,7 @@ class NFLPlayerService {
             this.lastUpdate = new Date();
             localStorage.setItem(this.lastUpdateKey, this.lastUpdate.toISOString());
             localStorage.setItem(this.cacheKey, JSON.stringify(this.players));
-            writePlayersToSessionCache(this.players);
+            writePlayersToCache(this.players);
             console.log(`Updated ${this.players.length} NFL players from Sleeper API`);
         } catch (error) {
             console.error('Error updating NFL player data from Sleeper:', error);
@@ -157,12 +218,11 @@ class NFLPlayerService {
                 this.players = [...FALLBACK_NFL_PLAYERS];
                 localStorage.setItem(this.cacheKey, JSON.stringify(this.players));
                 saveSleeperPlayersToCache(this.players);
-                writePlayersToSessionCache(this.players);
+                writePlayersToCache(this.players);
             }
         }
     }
 
-    // Load players from cache
     async loadFromCache() {
         try {
             const cachedData = localStorage.getItem(this.cacheKey);
@@ -187,18 +247,15 @@ class NFLPlayerService {
         }
     }
 
-    // Search players using Cloud Functions
     async searchPlayers(query) {
         if (!query || query.length < 2) return [];
 
         try {
             console.log(`Searching players with query: ${query}`);
             const response = await fetch(`${this.baseUrl}/searchPlayers?query=${encodeURIComponent(query)}&limit=50`);
-
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-
             const data = await response.json();
             return data.players || [];
         } catch (error) {
@@ -207,10 +264,8 @@ class NFLPlayerService {
         }
     }
 
-    // Fallback local search
     searchPlayersLocally(query) {
         if (!query || query.length < 2) return [];
-
         const searchTerm = query.toLowerCase();
         return this.players.filter((player) =>
             player.name.toLowerCase().includes(searchTerm)
@@ -221,24 +276,20 @@ class NFLPlayerService {
         );
     }
 
-    // Get players by position
     getPlayersByPosition(position) {
         return this.players.filter((player) => player.position === position);
     }
 
-    // Get players by team
     getPlayersByTeam(team) {
         return this.players.filter((player) => player.nflTeam === team);
     }
 
-    // Get top ranked players
     getTopPlayers(limit = 50) {
         return this.players
             .sort((a, b) => a.rank - b.rank)
             .slice(0, limit);
     }
 
-    // Get players by rank range
     getPlayersByRankRange(minRank, maxRank) {
         return this.players
             .filter((player) => player.rank >= minRank && player.rank <= maxRank)

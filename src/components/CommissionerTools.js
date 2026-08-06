@@ -21,6 +21,7 @@ import {
 } from '../constants/leagueDefaults.js';
 import { RosterConfiguration } from './RosterConfiguration.js';
 import { DraftSettingsPanel } from './DraftSettingsPanel.js';
+import { ScheduleManager } from './ScheduleManager.js';
 import { CommissionerRosterEditor } from './CommissionerRosterEditor.js';
 import { CommissionerTradeUndo } from './CommissionerTradeUndo.js';
 import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
@@ -750,6 +751,13 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
                         )}
                     </div>
                 )}
+
+                <ScheduleManager
+                    currentLeague={currentLeague}
+                    teamsData={teamsData}
+                    showMessage={showMessage}
+                    onLeagueUpdate={onLeagueUpdate}
+                />
 
                 <DraftSettingsPanel
                     currentLeague={currentLeague}

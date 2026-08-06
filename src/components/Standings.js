@@ -28,6 +28,7 @@ const Standings = ({ currentLeague, showMessage }) => {
         // One-shot load — standings are finalized Tuesdays, not live mid-week.
         // Avoid onSnapshot so liveScore writes don't re-render / flicker this page.
         db.collection(`leagues/${currentLeague.id}/teams`)
+            .limit(50)
             .get()
             .then((snapshot) => {
                 if (cancelled) return;

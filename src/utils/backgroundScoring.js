@@ -6,10 +6,25 @@
 
 const SLEEPER_STATE_URL = 'https://api.sleeper.app/v1/state/nfl';
 const SLEEPER_STATS_URL = 'https://api.sleeper.app/v1/stats/nfl/{season_type}/{season}/{week}';
+const SLEEPER_PROJECTIONS_URL = 'https://api.sleeper.app/v1/projections/nfl/{season_type}/{season}/{week}';
 const SLEEPER_PLAYERS_URL = 'https://api.sleeper.app/v1/players/nfl';
 
 const STATS_CACHE_TTL_MS = 60 * 1000; // 1 minute for live scoring
 const PLAYERS_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const PROJECTIONS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const PROJECTIONS_CACHE_KEY = 'sleeper_week_projections_v1';
+
+const METADATA_KEYS = new Set([
+    'player_id', 'team', 'opponent', 'company', 'category', 'game_id',
+    'date', 'week', 'season', 'season_type', 'sport', 'updated_at',
+]);
+
+let projectionsMemoryCache = {
+    key: null,
+    fetchedAt: 0,
+    byPlayer: null,
+    weekContext: null,
+};
 
 /**
  * Map Sleeper raw weekly stat keys → league scoringRules keys.
@@ -160,6 +175,160 @@ export async function fetchSleeperWeekStats({
     }
 
     return byPlayer;
+}
+
+/**
+ * Pull the raw projected-stat object from a Sleeper projection record.
+ */
+export function extractProjectedStats(record) {
+    if (!record || typeof record !== 'object') return {};
+    if (record.stats && typeof record.stats === 'object') {
+        return record.stats;
+    }
+    const projected = {};
+    Object.entries(record).forEach(([key, value]) => {
+        if (METADATA_KEYS.has(key)) return;
+        if (typeof value === 'number') {
+            projected[key] = value;
+        }
+    });
+    return projected;
+}
+
+/**
+ * Fetch Sleeper weekly projections for a given NFL week.
+ * Returns { [playerId]: projectedStatsObject }
+ */
+export async function fetchSleeperWeekProjections({
+    seasonType = 'regular',
+    season,
+    week,
+} = {}) {
+    if (!season || week == null) {
+        throw new Error('season and week are required to fetch Sleeper weekly projections');
+    }
+
+    const url = SLEEPER_PROJECTIONS_URL
+        .replace('{season_type}', encodeURIComponent(seasonType))
+        .replace('{season}', encodeURIComponent(String(season)))
+        .replace('{week}', encodeURIComponent(String(week)));
+
+    const response = await fetch(url, { method: 'GET' });
+    if (!response.ok) {
+        throw new Error(`Sleeper projections API failed: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = await response.json();
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Sleeper projections API returned an unexpected payload');
+    }
+
+    const byPlayer = {};
+    if (Array.isArray(payload)) {
+        payload.forEach((record) => {
+            if (record && record.player_id != null) {
+                byPlayer[String(record.player_id)] = extractProjectedStats(record);
+            }
+        });
+    } else {
+        Object.entries(payload).forEach(([playerId, record]) => {
+            if (record && typeof record === 'object') {
+                byPlayer[String(playerId)] = extractProjectedStats(record);
+            }
+        });
+    }
+
+    return byPlayer;
+}
+
+/**
+ * Score one player's weekly projected stats with league scoring rules.
+ * Returns 0 when projections are missing.
+ */
+export function getWeeklyProjectedPoints(playerId, projectionsByPlayer = {}, scoringRules = {}) {
+    if (!playerId) return 0;
+    const projectedStats = projectionsByPlayer[String(playerId)];
+    if (!projectedStats || typeof projectedStats !== 'object') return 0;
+    const scored = calculatePlayerPointsFromSleeperStats(projectedStats, scoringRules);
+    return Number.isFinite(scored.points) ? scored.points : 0;
+}
+
+/**
+ * Load current-week Sleeper projections (memory + localStorage, 30-min stale time).
+ */
+export async function getCachedWeekProjections({ forceRefresh = false } = {}) {
+    const now = Date.now();
+    if (
+        !forceRefresh
+        && projectionsMemoryCache.byPlayer
+        && projectionsMemoryCache.key
+        && now - projectionsMemoryCache.fetchedAt < PROJECTIONS_CACHE_TTL_MS
+    ) {
+        return {
+            weekContext: projectionsMemoryCache.weekContext,
+            projectionsByPlayer: projectionsMemoryCache.byPlayer,
+        };
+    }
+
+    if (!forceRefresh && typeof localStorage !== 'undefined') {
+        try {
+            const raw = localStorage.getItem(PROJECTIONS_CACHE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                const age = now - Number(parsed?.fetchedAt || 0);
+                if (
+                    parsed?.projectionsByPlayer
+                    && parsed?.weekContext
+                    && age >= 0
+                    && age < PROJECTIONS_CACHE_TTL_MS
+                ) {
+                    projectionsMemoryCache = {
+                        key: `${parsed.weekContext.season}_${parsed.weekContext.seasonType}_${parsed.weekContext.week}`,
+                        fetchedAt: Number(parsed.fetchedAt),
+                        byPlayer: parsed.projectionsByPlayer,
+                        weekContext: parsed.weekContext,
+                    };
+                    return {
+                        weekContext: parsed.weekContext,
+                        projectionsByPlayer: parsed.projectionsByPlayer,
+                    };
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to read weekly projections cache:', error);
+        }
+    }
+
+    const weekContext = await fetchSleeperNflState();
+    const projectionsByPlayer = await fetchSleeperWeekProjections({
+        seasonType: weekContext.seasonType,
+        season: weekContext.season,
+        week: weekContext.week,
+    });
+
+    projectionsMemoryCache = {
+        key: `${weekContext.season}_${weekContext.seasonType}_${weekContext.week}`,
+        fetchedAt: now,
+        byPlayer: projectionsByPlayer,
+        weekContext,
+    };
+
+    if (typeof localStorage !== 'undefined') {
+        try {
+            localStorage.setItem(
+                PROJECTIONS_CACHE_KEY,
+                JSON.stringify({
+                    fetchedAt: now,
+                    weekContext,
+                    projectionsByPlayer,
+                })
+            );
+        } catch (error) {
+            console.warn('Failed to write weekly projections cache:', error);
+        }
+    }
+
+    return { weekContext, projectionsByPlayer };
 }
 
 /**
@@ -526,7 +695,7 @@ class BackgroundScoringSystem {
                 throw new Error('Firestore db is not initialized');
             }
 
-            const teamsSnapshot = await this.db.collection(`leagues/${leagueId}/teams`).get();
+            const teamsSnapshot = await this.db.collection(`leagues/${leagueId}/teams`).limit(50).get();
             const teams = teamsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
             const scoringRules = league.settings?.scoringRules || {};
 

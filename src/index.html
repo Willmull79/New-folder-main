@@ -6,23 +6,30 @@
     <meta name="theme-color" content="#022c22">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Fantasy Dynasty Central</title>
+    <title>Fantasy Dynasty Leagues - Fully Customizable Dynasty Leagues</title>
+    <meta name="description" content="Dynasty League football. Fully customizable leagues, starting at only $4 a month or $35 a year - first month free so you can check out the site. You are going to love it. Do everything from this site: IDP leagues, team defense, or both. Roster up to 14 starters or as few as you want - same with the bench. Everything is customizable: salaries, auctions, regular drafts, snake drafts - you name it, we do it. And if we do not, we will create it.">
     
 
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-check-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-storage-compat.js"></script>
+    <!-- Set your reCAPTCHA v3 site key before the app bundle loads (Firebase App Check). -->
+    <script>
+      window.FIREBASE_APPCHECK_RECAPTCHA_SITE_KEY = window.FIREBASE_APPCHECK_RECAPTCHA_SITE_KEY || '';
+    </script>
     
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #111827; /* bg-gray-900 */
+            background-color: #141414; /* charcoal app background */
         }
         /* Simple modal animation */
         .modal-enter {
@@ -57,6 +64,10 @@
     </style>
 </head>
 <body>
+    <noscript>
+        <h1>Fantasy Dynasty Leagues</h1>
+        <p>Dynasty League football. Fully customizable leagues, starting at only $4 a month or $35 a year - first month free so you can check out the site. You are going to love it. Do everything from this site: IDP leagues, team defense, or both. Roster up to 14 starters or as few as you want - same with the bench. Everything is customizable: salaries, auctions, regular drafts, snake drafts - you name it, we do it. And if we do not, we will create it.</p>
+    </noscript>
     <div id="root"></div>
 </body>
 </html> 

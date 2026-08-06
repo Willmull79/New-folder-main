@@ -105,7 +105,7 @@ export const joinLeagueAsUser = async ({ db, leagueId, userId, userDisplayName }
     }
 
     const leagueData = leagueDoc.data() || {};
-    const existingTeamQuery = await teamsCollectionRef.where('ownerId', '==', userId).get();
+    const existingTeamQuery = await teamsCollectionRef.where('ownerId', '==', userId).limit(1).get();
     const existingTeamId = existingTeamQuery.empty ? null : existingTeamQuery.docs[0].id;
 
     // Safety check: never re-add someone already in the league
@@ -154,15 +154,11 @@ export const joinLeagueAsUser = async ({ db, leagueId, userId, userDisplayName }
     }
 
     const newTeamRef = await teamsCollectionRef.add(newTeamData);
-    const leagueUpdate = {
+    await leagueDocRef.update({
+        memberIds: firebase.firestore.FieldValue.arrayUnion(userId),
+        members: firebase.firestore.FieldValue.arrayUnion(userId),
         teams: firebase.firestore.FieldValue.arrayUnion(newTeamRef.id),
-    };
-    // Keep an optional members array in sync when the league uses one
-    if (Array.isArray(leagueData.members)) {
-        leagueUpdate.members = firebase.firestore.FieldValue.arrayUnion(userId);
-    }
-
-    await leagueDocRef.update(leagueUpdate);
+    });
 
     return {
         leagueId,

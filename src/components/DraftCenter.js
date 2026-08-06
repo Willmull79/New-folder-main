@@ -322,7 +322,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             if (!db || !currentLeague?.id) return;
             
             try {
-                const teamsSnapshot = await db.collection(`leagues/${currentLeague.id}/teams`).get();
+                const teamsSnapshot = await db.collection(`leagues/${currentLeague.id}/teams`).limit(50).get();
                 const teams = teamsSnapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
