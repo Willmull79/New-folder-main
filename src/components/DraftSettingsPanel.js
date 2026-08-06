@@ -4,10 +4,15 @@ import draftService from '../utils/draftService.js';
 import nflPlayerService from '../utils/nflPlayerService.js';
 import { ConfirmationModal } from './ConfirmationModal.js';
 import {
+    DEFAULT_AUCTION_BID_TIME,
     DRAFT_TYPE_OPTIONS,
+    MAX_AUCTION_BID_TIME,
     MAX_ROUNDS,
+    MIN_AUCTION_BID_TIME,
+    MIN_PICK_TIME,
     MIN_ROUNDS,
     PICK_TIME_OPTIONS,
+    clampAuctionBidSeconds,
     draftTypeToFormat,
     formatPickTimeLabel,
     generatePickOrder,
@@ -58,11 +63,18 @@ export const DraftSettingsPanel = ({
             || draft.manualOrder
             || [];
 
-        setDraftType(currentLeague.settings?.draftType || draft.type || 'auction');
+        const nextDraftType = currentLeague.settings?.draftType || draft.type || 'auction';
+        const rawPickTime = settings.pickTimeLimit ?? settings.timeLimit;
+
+        setDraftType(nextDraftType);
         setDraftDateTime(toDateTimeLocalValue(draft.scheduledDateTime));
         setDraftOrderType(settings.orderType || draft.orderType || 'random');
         setDraftRounds(settings.rounds ?? MAX_ROUNDS);
-        setPickTimeLimit(settings.pickTimeLimit ?? settings.timeLimit ?? 60);
+        setPickTimeLimit(
+            nextDraftType === 'auction'
+                ? clampAuctionBidSeconds(rawPickTime ?? DEFAULT_AUCTION_BID_TIME)
+                : (rawPickTime === undefined ? 60 : rawPickTime)
+        );
         setDraftStatus(draft.status || 'pending');
 
         if (savedRoundOneOrder.length) {
@@ -92,6 +104,10 @@ export const DraftSettingsPanel = ({
         const nextStatus = overrides.status
             ?? (roundOneOrder.length ? 'order_set' : (draftDateTime ? 'scheduled' : 'pending'));
 
+        const resolvedPickTimeLimit = draftType === 'auction'
+            ? clampAuctionBidSeconds(pickTimeLimit ?? DEFAULT_AUCTION_BID_TIME)
+            : pickTimeLimit;
+
         const draftPayload = {
             ...(currentLeague.draft || {}),
             type: draftType,
@@ -103,7 +119,7 @@ export const DraftSettingsPanel = ({
                 ...(currentLeague.draft?.settings || {}),
                 draftFormat,
                 rounds: Number(draftRounds),
-                pickTimeLimit,
+                pickTimeLimit: resolvedPickTimeLimit,
                 orderType: overrides.orderType ?? draftOrderType,
             },
         };
@@ -132,7 +148,9 @@ export const DraftSettingsPanel = ({
                 await draftService.configureDraft(currentLeague.id, {
                     draftFormat,
                     rounds: draftRounds,
-                    pickTimeLimit,
+                    pickTimeLimit: draftType === 'auction'
+                        ? clampAuctionBidSeconds(pickTimeLimit ?? DEFAULT_AUCTION_BID_TIME)
+                        : pickTimeLimit,
                     orderType: draftOrderType,
                     roundOneOrder: manualDraftOrder,
                 });
@@ -321,7 +339,15 @@ export const DraftSettingsPanel = ({
                     <span className="text-emerald-200 font-medium">Draft Type</span>
                     <select
                         value={draftType}
-                        onChange={(e) => setDraftType(e.target.value)}
+                        onChange={(e) => {
+                            const nextType = e.target.value;
+                            setDraftType(nextType);
+                            if (nextType === 'auction') {
+                                setPickTimeLimit((prev) => clampAuctionBidSeconds(prev ?? DEFAULT_AUCTION_BID_TIME));
+                            } else if (pickTimeLimit != null && pickTimeLimit < MIN_PICK_TIME) {
+                                setPickTimeLimit(60);
+                            }
+                        }}
                         className={inputClassName}
                     >
                         {DRAFT_TYPE_OPTIONS.map((option) => (
@@ -372,6 +398,28 @@ export const DraftSettingsPanel = ({
                     </button>
                 </div>
             </div>
+
+            {!isPickDraft && (
+                <div className="mb-6 p-4 rounded-lg bg-emerald-900/60 border border-emerald-700">
+                    <h5 className="text-lg font-bold mb-3 text-emerald-200 border-b border-emerald-600 pb-2">Auction Options</h5>
+                    <label className="block max-w-xs">
+                        <span className="text-emerald-200 font-medium text-sm">
+                            Bid Timer ({MIN_AUCTION_BID_TIME}-{MAX_AUCTION_BID_TIME} seconds)
+                        </span>
+                        <input
+                            type="number"
+                            min={MIN_AUCTION_BID_TIME}
+                            max={MAX_AUCTION_BID_TIME}
+                            value={pickTimeLimit ?? DEFAULT_AUCTION_BID_TIME}
+                            onChange={(e) => setPickTimeLimit(clampAuctionBidSeconds(e.target.value))}
+                            className={inputClassName}
+                        />
+                        <p className="text-xs text-emerald-400 mt-2">
+                            How long bidding stays open after a nomination or new bid. Current: {formatPickTimeLabel(clampAuctionBidSeconds(pickTimeLimit ?? DEFAULT_AUCTION_BID_TIME))}
+                        </p>
+                    </label>
+                </div>
+            )}
 
             {isPickDraft && (
                 <div className="mb-6 p-4 rounded-lg bg-emerald-900/60 border border-emerald-700">

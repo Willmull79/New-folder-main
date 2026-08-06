@@ -21,6 +21,8 @@ const normalizePlayer = (player) => {
         team: player.nflTeam || player.team || 'FA',
         rank: player.rank || 999,
         salary: player.salary || 1,
+        projectedPoints: player.projectedPoints ?? player.projected_points ?? null,
+        espn_id: player.espn_id ?? null,
     };
 };
 

@@ -31,20 +31,24 @@ export const LeagueSelector = ({
     useEffect(() => {
         if (!db || !userId) return;
 
-        const unsubscribe = db.collection("leagues")
+        // memberIds query satisfies security rules; then keep only leagues where you still own a team
+        // (matches prior UX and hides leftover league docs with no teams)
+        const unsubscribe = db.collection('leagues')
+            .where('memberIds', 'array-contains', userId)
             .onSnapshot(async (leagueSnapshot) => {
                 const userLeaguesData = [];
 
                 for (const leagueDoc of leagueSnapshot.docs) {
-                    const leagueData = leagueDoc.data();
-                    const leagueId = leagueDoc.id;
-
-                    const teamsSnapshot = await db.collection(`leagues/${leagueId}/teams`)
-                        .where("ownerId", "==", userId)
-                        .get();
-
-                    if (!teamsSnapshot.empty) {
-                        userLeaguesData.push({ id: leagueId, ...leagueData });
+                    try {
+                        const teamsSnapshot = await db.collection(`leagues/${leagueDoc.id}/teams`)
+                            .where('ownerId', '==', userId)
+                            .limit(1)
+                            .get();
+                        if (!teamsSnapshot.empty) {
+                            userLeaguesData.push({ id: leagueDoc.id, ...leagueDoc.data() });
+                        }
+                    } catch (err) {
+                        console.warn('Error checking teams for league', leagueDoc.id, err);
                     }
                 }
 
@@ -218,6 +222,8 @@ const CreateLeagueForm = ({ userId, userDisplayName, showMessage, onLeagueCreate
                 name: leagueName.trim(),
                 commissionerId: userId,
                 coCommissioners: [],
+                memberIds: [userId],
+                members: [userId],
                 teams: [],
                 allRosteredPlayerIds: [],
                 settings: {

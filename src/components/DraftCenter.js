@@ -9,7 +9,7 @@ import { SleeperPlayerList } from './SleeperPlayerList.js';
 import {
     MAX_ROUNDS,
 } from '../utils/draftOrderUtils.js';
-import { isOnActiveNflRoster } from '../utils/helpers.js';
+import { isOnActiveNflRoster, formatProjectedPoints, getPlayerRank, sortPlayersByRankAndProjection } from '../utils/helpers.js';
 import { isLeagueCommissioner } from '../constants/leagueDefaults.js';
 
 const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, currentTeamId, userId }) => {
@@ -102,9 +102,11 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             ? draftData.availablePlayers
             : playerSource;
 
-        return source.filter((player) => (
-            isOnActiveNflRoster(player) && !draftedIds.has(player.id)
-        ));
+        return sortPlayersByRankAndProjection(
+            source.filter((player) => (
+                isOnActiveNflRoster(player) && !draftedIds.has(player.id)
+            ))
+        );
     }, [draftStatus, draftData, currentLeague, playerSource]);
 
     const visibleDraftPlayers = useMemo(() => {
@@ -295,12 +297,9 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         const fetchPlayers = async () => {
             try {
                 if (allPlayers?.length) {
-                    const sortedPlayers = [...allPlayers]
-                        .filter(isOnActiveNflRoster)
-                        .sort((a, b) => {
-                        if (a.rank && b.rank) return a.rank - b.rank;
-                        return a.name.localeCompare(b.name);
-                    });
+                    const sortedPlayers = sortPlayersByRankAndProjection(
+                        [...allPlayers].filter(isOnActiveNflRoster)
+                    );
                     setAllNFLPlayers(sortedPlayers);
                     setFilteredPlayers(sortedPlayers);
                     return;
@@ -308,14 +307,9 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
 
                 const players = await nflPlayerService.getAllPlayers();
                 if (players && players.length > 0) {
-                    const sortedPlayers = players
-                        .filter(isOnActiveNflRoster)
-                        .sort((a, b) => {
-                        if (a.rank && b.rank) {
-                            return a.rank - b.rank;
-                        }
-                        return a.name.localeCompare(b.name);
-                    });
+                    const sortedPlayers = sortPlayersByRankAndProjection(
+                        players.filter(isOnActiveNflRoster)
+                    );
                     setAllNFLPlayers(sortedPlayers);
                     setFilteredPlayers(sortedPlayers);
                 }
@@ -423,7 +417,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
         // Fall back to best available from the draft pool (lowest rank number)
         if (!selectedPlayer) {
             fromBoard = false;
-            selectedPlayer = [...pool].sort((a, b) => (a.rank || 9999) - (b.rank || 9999))[0];
+            selectedPlayer = sortPlayersByRankAndProjection([...pool])[0];
         }
 
         if (!selectedPlayer?.id) return;
@@ -827,7 +821,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                         <div className="flex-1">
                                             <div className="font-semibold">{player.name}</div>
                                             <div className="text-sm text-emerald-300">
-                                                {player.position} • {player.nflTeam} • Rank: {player.rank}
+                                                {player.position} • {player.nflTeam} • Rank: {getPlayerRank(player) ?? '—'} • Proj: {formatProjectedPoints(player)}
                                             </div>
                                         </div>
                                         <div className="text-xs text-emerald-400">
@@ -871,7 +865,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                             <div>
                                                 <div className="font-semibold text-sm">{player.name}</div>
                                                 <div className="text-xs text-emerald-300">
-                                                    {player.position} • {player.nflTeam} • Rank: {player.rank}
+                                                    {player.position} • {player.nflTeam} • Rank: {getPlayerRank(player) ?? '—'} • Proj: {formatProjectedPoints(player)}
                                                 </div>
                                                 <div className="flex justify-between items-center mt-2">
                                                     <button

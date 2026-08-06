@@ -7,7 +7,7 @@ import {
     saveSleeperPlayersToCache,
 } from './sleeperPlayerService.js';
 
-export const SESSION_PLAYERS_CACHE_KEY = 'nfl_master_players_session';
+export const SESSION_PLAYERS_CACHE_KEY = 'nfl_master_players_session_v2';
 
 export const normalizeFirestorePlayer = (doc) => {
     const data = typeof doc.data === 'function' ? doc.data() : (doc || {});
@@ -16,6 +16,8 @@ export const normalizeFirestorePlayer = (doc) => {
     const lastName = (data.last_name || '').trim();
     const fullName = (data.name || `${firstName} ${lastName}`).trim() || 'Unknown';
     const team = data.nflTeam || data.team || 'FA';
+    const projectedPoints = Number(data.projectedPoints ?? data.projected_points);
+    const rankValue = Number(data.rank ?? data.search_rank);
 
     return {
         ...data,
@@ -26,7 +28,9 @@ export const normalizeFirestorePlayer = (doc) => {
         position: data.position || null,
         nflTeam: team,
         team,
-        rank: data.rank ?? data.search_rank ?? 9999,
+        rank: Number.isFinite(rankValue) && rankValue > 0 ? rankValue : 9999,
+        projectedPoints: Number.isFinite(projectedPoints) ? projectedPoints : null,
+        espn_id: data.espn_id != null ? String(data.espn_id) : null,
         salary: data.salary ?? 1,
         status: data.status || null,
     };

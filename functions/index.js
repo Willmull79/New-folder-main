@@ -22,10 +22,15 @@ const {
 const { runSleeperPlayerSync } = require('./sleeperSyncRunner.js');
 const { runProjectionScrape } = require('./projectionScrapeRunner.js');
 const { finalizeAllLeagueStandings } = require('./scoringEngine.js');
+const { billingApi, stripeWebhook } = require('./stripeBilling.js');
 
 // Sleeper NFL player sync — Mon–Sat 6 AM ET + Sunday 10 AM ET (America/New_York)
 exports.fetchAndStoreSleeperDataWeekday = fetchAndStoreSleeperDataWeekday;
 exports.fetchAndStoreSleeperDataSunday = fetchAndStoreSleeperDataSunday;
+
+// Platform billing (Stripe Checkout + Customer Portal + webhooks)
+exports.billingApi = billingApi;
+exports.stripeWebhook = stripeWebhook;
 
 // CORS configuration
 const cors = require('cors')({
@@ -746,14 +751,19 @@ exports.manageAuctionTimer = functions.https.onRequest(async (req, res) => {
 });
 
 // Clean up expired auctions (runs every minute during auction hours)
-exports.cleanupExpiredAuctions = functions.pubsub.schedule('every 1 minutes').onRun(async (context) => {
+exports.cleanupExpiredAuctions = functions.pubsub.schedule('every 5 minutes').onRun(async (context) => {
     try {
-        const now = admin.firestore.Timestamp.now();
         const leaguesRef = admin.firestore().collection('leagues');
         
         const leaguesSnapshot = await leaguesRef
             .where('auction.status', '==', 'live')
+            .limit(50)
             .get();
+
+        if (leaguesSnapshot.empty) {
+            console.log('No live auctions — skipping auction cleanup');
+            return null;
+        }
             
         console.log(`Checking ${leaguesSnapshot.docs.length} live auctions for cleanup`);
         
@@ -1548,37 +1558,38 @@ exports.validateDraftPick = functions.https.onRequest(async (req, res) => {
 // === WAIVER WIRE FUNCTIONS =========================================================
 // =====================================================================================
 
-// Process expired waiver claims (runs every 5 minutes)
+// Process expired waiver claims (collection group — no full leagues scan)
 exports.processExpiredWaivers = functions.pubsub.schedule('every 5 minutes').onRun(async (context) => {
     try {
         const now = admin.firestore.Timestamp.now();
-        const leaguesRef = admin.firestore().collection('leagues');
-        
-        const leaguesSnapshot = await leaguesRef.get();
-        
-        for (const leagueDoc of leaguesSnapshot.docs) {
-            const leagueId = leagueDoc.id;
-            const waiversRef = admin.firestore().collection(`leagues/${leagueId}/waivers`);
-            const waiversSnapshot = await waiversRef.get();
-            
-            for (const waiverDoc of waiversSnapshot.docs) {
-                const waiverData = waiverDoc.data();
-                
-                // Check if waiver has expired
-                if (waiverData.expiration && waiverData.expiration.toDate() < new Date()) {
-                    console.log(`Processing expired waiver for player ${waiverData.playerId} in league ${leagueId}`);
-                    
-                    // Award player to highest bidder
-                    if (waiverData.highestBidder && waiverData.highestBid > 0) {
-                        await awardWaiverPlayer(leagueId, waiverData);
-                    }
-                    
-                    // Delete the waiver claim
-                    await waiverDoc.ref.delete();
-                }
-            }
+        const expiredSnap = await admin.firestore()
+            .collectionGroup('waivers')
+            .where('status', '==', 'active')
+            .where('expiration', '<=', now)
+            .limit(100)
+            .get();
+
+        if (expiredSnap.empty) {
+            console.log('No expired active waivers');
+            return null;
         }
-        
+
+        console.log(`Processing ${expiredSnap.size} expired waiver(s)`);
+
+        for (const waiverDoc of expiredSnap.docs) {
+            const waiverData = waiverDoc.data();
+            const leagueId = waiverDoc.ref.parent.parent?.id;
+            if (!leagueId) continue;
+
+            console.log(`Processing expired waiver for player ${waiverData.playerId} in league ${leagueId}`);
+
+            if (waiverData.highestBidder && waiverData.highestBid > 0) {
+                await awardWaiverPlayer(leagueId, waiverData);
+            }
+
+            await waiverDoc.ref.update({ status: 'processed' });
+        }
+
         return null;
     } catch (error) {
         console.error('Process expired waivers error:', error);
@@ -1589,27 +1600,33 @@ exports.processExpiredWaivers = functions.pubsub.schedule('every 5 minutes').onR
 // Award waiver player to winning team
 async function awardWaiverPlayer(leagueId, waiverData) {
     const batch = admin.firestore().batch();
-    
-    // Add player to winning team's bench
-    const teamRef = admin.firestore().doc(`artifacts/default-fantasy-football-app/public/data/teams/${waiverData.highestBidder}`);
+    const teamId = waiverData.highestBidder;
+    const teamRef = admin.firestore().doc(`leagues/${leagueId}/teams/${teamId}`);
     const teamDoc = await teamRef.get();
-    
+
     if (teamDoc.exists) {
-        const teamData = teamDoc.data();
-        const updatedRoster = { ...teamData.roster };
-        updatedRoster.bench.push(waiverData.playerId);
-        
-        batch.update(teamRef, { roster: updatedRoster });
+        const teamData = teamDoc.data() || {};
+        const roster = teamData.roster || {};
+        const bench = Array.isArray(roster.bench) ? [...roster.bench] : [];
+        if (!bench.includes(waiverData.playerId)) {
+            bench.push(waiverData.playerId);
+        }
+        batch.update(teamRef, {
+            roster: {
+                lineup: roster.lineup || {},
+                bench,
+                ir: Array.isArray(roster.ir) ? roster.ir : [],
+            },
+        });
     }
-    
-    // Update league's rostered players
+
     const leagueRef = admin.firestore().doc(`leagues/${leagueId}`);
     batch.update(leagueRef, {
-        allRosteredPlayerIds: admin.firestore.FieldValue.arrayUnion(waiverData.playerId)
+        allRosteredPlayerIds: admin.firestore.FieldValue.arrayUnion(waiverData.playerId),
     });
-    
+
     await batch.commit();
-    console.log(`Waiver player ${waiverData.playerId} awarded to team ${waiverData.highestBidder} for $${waiverData.highestBid}`);
+    console.log(`Waiver player ${waiverData.playerId} awarded to team ${teamId} for $${waiverData.highestBid}`);
 }
 
 // Validate waiver bid
@@ -1978,18 +1995,13 @@ exports.getAvailablePlayers = functions.https.onRequest(async (req, res) => {
     }
 });
 
-// Import ESPN data service functions
-const { updateTeamsDaily, updatePlayersDaily, updateGamesHourly, updatePlayerStatsGameDay, updateAllDataWeekly, manualUpdate, getUpdateStatus } = require('./scheduledUpdates');
+// ESPN scheduled syncs removed — Sleeper is the player/data source of truth.
+const { manualUpdate, getUpdateStatus } = require('./scheduledUpdates');
 
 // Import player search service
 const { PlayerSearchService } = require('./playerSearchService');
 
-// Export ESPN data service functions
-exports.updateTeamsDaily = updateTeamsDaily;
-exports.updatePlayersDaily = updatePlayersDaily;
-exports.updateGamesHourly = updateGamesHourly;
-exports.updatePlayerStatsGameDay = updatePlayerStatsGameDay;
-exports.updateAllDataWeekly = updateAllDataWeekly;
+// Keep manual HTTP helpers if still used; do not export ESPN cron jobs
 exports.manualUpdate = manualUpdate;
 exports.getUpdateStatus = getUpdateStatus;
 
@@ -2034,15 +2046,21 @@ exports.getAllPlayers = functions.https.onRequest(async (req, res) => {
 // Initialize Python bridge for advanced draft analysis
 const pythonBridge = new PythonBridge();
 
-// Check if draft should auto-start based on scheduled time
-exports.checkDraftAutoStart = functions.pubsub.schedule('every 1 minutes').onRun(async (context) => {
+// Check if draft should auto-start based on scheduled time (5 min cadence when idle is fine)
+exports.checkDraftAutoStart = functions.pubsub.schedule('every 5 minutes').onRun(async (context) => {
     try {
         const now = new Date();
         const leaguesRef = admin.firestore().collection('leagues');
         
         const leaguesSnapshot = await leaguesRef
             .where('draft.status', '==', 'scheduled')
+            .limit(50)
             .get();
+
+        if (leaguesSnapshot.empty) {
+            console.log('No scheduled drafts — skipping auto-start check');
+            return null;
+        }
             
         console.log(`Checking ${leaguesSnapshot.docs.length} scheduled drafts for auto-start`);
         
@@ -2054,8 +2072,8 @@ exports.checkDraftAutoStart = functions.pubsub.schedule('every 1 minutes').onRun
                 const scheduledDate = new Date(scheduledTime);
                 const timeDiff = scheduledDate.getTime() - now.getTime();
                 
-                // Auto-start if scheduled time has passed (within 1 minute tolerance)
-                if (timeDiff <= 60000 && timeDiff > -60000) {
+                // Auto-start once scheduled time has passed (5-minute schedule window)
+                if (timeDiff <= 5 * 60 * 1000 && timeDiff > -5 * 60 * 1000) {
                     console.log(`Auto-starting draft for league ${leagueDoc.id}`);
                     await autoStartDraft(leagueDoc.id, league);
                 }
@@ -2452,14 +2470,20 @@ exports.getDraftTimerState = functions.https.onRequest(async (req, res) => {
     });
 });
 
-// Update draft timer (runs every minute during active drafts)
-exports.updateDraftTimer = functions.pubsub.schedule('every 1 minutes').onRun(async (context) => {
+// Update draft timer — only runs work when drafts are live; wall-clock based for 5-min cadence
+exports.updateDraftTimer = functions.pubsub.schedule('every 5 minutes').onRun(async (context) => {
     try {
         const leaguesRef = admin.firestore().collection('leagues');
         
         const leaguesSnapshot = await leaguesRef
             .where('draft.status', '==', 'live')
+            .limit(50)
             .get();
+
+        if (leaguesSnapshot.empty) {
+            console.log('No live drafts — skipping timer update');
+            return null;
+        }
             
         for (const leagueDoc of leaguesSnapshot.docs) {
             const leagueId = leagueDoc.id;
@@ -2470,15 +2494,18 @@ exports.updateDraftTimer = functions.pubsub.schedule('every 1 minutes').onRun(as
             const pickTimeLimit = resolvePickTimeLimit(draftSettings);
 
             if (draftData.status === 'live' && pickTimeLimit !== null && draftData.timeRemaining > 0) {
-                const newTimeRemaining = draftData.timeRemaining - 1;
+                const lastUpdate = draftData.lastUpdate?.toDate?.()
+                    || draftData.startedAt?.toDate?.()
+                    || null;
+                const elapsedMs = lastUpdate ? (Date.now() - lastUpdate.getTime()) : (5 * 60 * 1000);
+                const elapsedUnits = Math.max(1, Math.round(elapsedMs / 60000));
+                const newTimeRemaining = Math.max(0, draftData.timeRemaining - elapsedUnits);
                 
-                // Update the league document directly
                 await admin.firestore().doc(`leagues/${leagueId}`).update({
                     'draft.timeRemaining': newTimeRemaining,
                     'draft.lastUpdate': admin.firestore.FieldValue.serverTimestamp()
                 });
                 
-                // Auto-pick if time runs out
                 if (newTimeRemaining <= 0) {
                     await handleTimeUp(leagueId, draftData);
                 }
@@ -2490,7 +2517,7 @@ exports.updateDraftTimer = functions.pubsub.schedule('every 1 minutes').onRun(as
         console.error('Update draft timer error:', error);
         throw error;
     }
-}); 
+});
 
 // Helper function to handle CORS preflight
 const handleCORS = (req, res, next) => {

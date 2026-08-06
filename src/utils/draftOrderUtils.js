@@ -1,6 +1,9 @@
 export const MIN_PICK_TIME = 15;
 export const MIN_ROUNDS = 1;
 export const MAX_ROUNDS = 20;
+export const MIN_AUCTION_BID_TIME = 5;
+export const MAX_AUCTION_BID_TIME = 30;
+export const DEFAULT_AUCTION_BID_TIME = 30;
 
 export const PICK_TIME_OPTIONS = [
     { value: 15, label: '15 seconds' },
@@ -13,6 +16,12 @@ export const PICK_TIME_OPTIONS = [
     { value: 300, label: '5 minutes' },
     { value: null, label: 'Unlimited' }
 ];
+
+export function clampAuctionBidSeconds(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value)) return DEFAULT_AUCTION_BID_TIME;
+    return Math.min(MAX_AUCTION_BID_TIME, Math.max(MIN_AUCTION_BID_TIME, Math.round(value)));
+}
 
 export const DRAFT_FORMAT_OPTIONS = [
     { value: 'standard', label: 'Standard Draft' },

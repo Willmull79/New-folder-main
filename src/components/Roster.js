@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
-import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
+import { getPlayerDetails, getAvailablePlayers, formatProjectedPoints, getPlayerRank } from '../utils/helpers.js';
 import { useAutoSetLineup } from '../hooks/useAutoSetLineup.js';
 import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
 import {
@@ -487,7 +487,9 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                             <option value="">Select a player...</option>
                             {availablePlayers.length > 0 ? (
                                 availablePlayers.map(player => (
-                                    <option key={player.id} value={player.id}>{player.name} ({player.position} - {player.nflTeam})</option>
+                                    <option key={player.id} value={player.id}>
+                                        #{getPlayerRank(player) ?? '—'} {player.name} ({player.position} - {player.nflTeam}) · Proj {formatProjectedPoints(player)}
+                                    </option>
                                 ))
                             ) : (
                                 <option disabled>No players available</option>

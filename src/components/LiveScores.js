@@ -142,7 +142,7 @@ const LiveScores = ({
         }
     }, [currentLeague, allPlayers, currentTeamId, db]);
 
-    // Score once when teams first load for this league; optional 60s refresh
+    // Score once when teams first load; optional 15-minute refresh
     useEffect(() => {
         hasScoredRef.current = false;
     }, [currentLeague?.id]);
@@ -158,7 +158,7 @@ const LiveScores = ({
 
         const interval = setInterval(() => {
             refreshFantasyScores({ silent: true });
-        }, 60000);
+        }, 15 * 60 * 1000); // 15 minutes — cost-efficient live scoring
 
         return () => clearInterval(interval);
     }, [teamsData.length, autoRefresh, currentLeague?.id, refreshFantasyScores]);
@@ -202,7 +202,7 @@ const LiveScores = ({
                                 onChange={(e) => setAutoRefresh(e.target.checked)}
                                 className="rounded bg-emerald-100 border-emerald-300 text-purple-500 focus:ring-purple-500"
                             />
-                            Auto-refresh
+                            Auto-refresh (15 min)
                         </label>
                         <button
                             type="button"

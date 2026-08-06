@@ -3,11 +3,14 @@ import {
     addDoc,
     collection,
     doc,
+    getDocs,
+    limit,
     onSnapshot,
     orderBy,
     query,
     serverTimestamp,
     setDoc,
+    startAfter,
 } from 'firebase/firestore';
 import { getModularFirestore } from '../config/firebaseModular.js';
 import {
@@ -16,22 +19,23 @@ import {
 } from '../utils/leagueNotifications.js';
 import './DirectMessage.css';
 
+const PAGE_SIZE = 100;
+
 /**
- * One-on-one private Direct Messaging via the modular Firebase Firestore SDK.
- * Schema: direct_messages/{chatId}/messages/{messageId}
- *
- * @param {{ uid: string, displayName: string }} currentUser
- * @param {{ uid: string, displayName: string }} targetUser
+ * One-on-one DMs. Newest 100 live; older via pagination.
  */
 export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
     const [messages, setMessages] = useState([]);
     const [text, setText] = useState('');
     const [isSending, setIsSending] = useState(false);
+    const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+    const [hasMoreOlder, setHasMoreOlder] = useState(false);
     const [error, setError] = useState('');
     const messagesEndRef = useRef(null);
     const chatDocEnsuredRef = useRef(false);
+    const olderCursorRef = useRef(null);
+    const stickToBottomRef = useRef(true);
 
-    /** Deterministic chat id: sorted UIDs joined with an underscore. */
     const getChatId = (uidA, uidB) => [uidA, uidB].sort().join('_');
 
     const chatId =
@@ -41,6 +45,8 @@ export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
 
     useEffect(() => {
         chatDocEnsuredRef.current = false;
+        olderCursorRef.current = null;
+        setHasMoreOlder(false);
     }, [chatId]);
 
     useEffect(() => {
@@ -51,16 +57,24 @@ export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
 
         const db = getModularFirestore();
         const messagesRef = collection(db, 'direct_messages', chatId, 'messages');
-        const messagesQuery = query(messagesRef, orderBy('createdAt', 'asc'));
+        const liveQuery = query(messagesRef, orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
 
         const unsubscribe = onSnapshot(
-            messagesQuery,
+            liveQuery,
             (snapshot) => {
-                const nextMessages = snapshot.docs.map((docSnap) => ({
+                const liveChronological = [...snapshot.docs].reverse().map((docSnap) => ({
                     id: docSnap.id,
                     ...docSnap.data(),
                 }));
-                setMessages(nextMessages);
+                olderCursorRef.current = snapshot.docs.length
+                    ? snapshot.docs[snapshot.docs.length - 1]
+                    : null;
+                setHasMoreOlder(snapshot.docs.length >= PAGE_SIZE);
+                setMessages((prev) => {
+                    const liveIds = new Set(liveChronological.map((m) => m.id));
+                    const olderOnly = prev.filter((m) => !liveIds.has(m.id));
+                    return [...olderOnly, ...liveChronological];
+                });
                 setError('');
             },
             (snapshotError) => {
@@ -73,8 +87,49 @@ export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
     }, [chatId]);
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        if (stickToBottomRef.current) {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
     }, [messages]);
+
+    const loadOlderMessages = async () => {
+        if (!chatId || !olderCursorRef.current || isLoadingOlder || !hasMoreOlder) return;
+        setIsLoadingOlder(true);
+        stickToBottomRef.current = false;
+        try {
+            const db = getModularFirestore();
+            const messagesRef = collection(db, 'direct_messages', chatId, 'messages');
+            const olderQuery = query(
+                messagesRef,
+                orderBy('createdAt', 'desc'),
+                startAfter(olderCursorRef.current),
+                limit(PAGE_SIZE)
+            );
+            const snap = await getDocs(olderQuery);
+            if (snap.docs.length < PAGE_SIZE) {
+                setHasMoreOlder(false);
+            }
+            if (snap.empty) {
+                setHasMoreOlder(false);
+                return;
+            }
+            olderCursorRef.current = snap.docs[snap.docs.length - 1];
+            const olderChronological = [...snap.docs].reverse().map((docSnap) => ({
+                id: docSnap.id,
+                ...docSnap.data(),
+            }));
+            setMessages((prev) => {
+                const existing = new Set(prev.map((m) => m.id));
+                const fresh = olderChronological.filter((m) => !existing.has(m.id));
+                return [...fresh, ...prev];
+            });
+        } catch (loadError) {
+            console.error('Error loading older DMs:', loadError);
+            setError(loadError?.message || 'Failed to load older messages.');
+        } finally {
+            setIsLoadingOlder(false);
+        }
+    };
 
     const handleSubmit = async (event) => {
         event.preventDefault();
@@ -82,12 +137,12 @@ export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
         if (!trimmed || !chatId || !currentUser?.uid || isSending) return;
 
         setIsSending(true);
+        stickToBottomRef.current = true;
         setError('');
         try {
             const db = getModularFirestore();
             const chatDocRef = doc(db, 'direct_messages', chatId);
 
-            // Ensure parent chat doc exists with participants before the first message
             if (!chatDocEnsuredRef.current) {
                 await setDoc(
                     chatDocRef,
@@ -167,6 +222,18 @@ export const DirectMessage = ({ currentUser, targetUser, leagueId }) => {
 
             <div className="direct-message__window" role="log" aria-live="polite">
                 {error && <p className="direct-message__error">{error}</p>}
+                {hasMoreOlder && (
+                    <div className="flex justify-center py-2">
+                        <button
+                            type="button"
+                            onClick={loadOlderMessages}
+                            disabled={isLoadingOlder}
+                            className="text-sm text-emerald-300 hover:text-white disabled:opacity-50"
+                        >
+                            {isLoadingOlder ? 'Loading…' : 'Load older messages'}
+                        </button>
+                    </div>
+                )}
                 {messages.length === 0 && !error ? (
                     <p className="direct-message__empty">No messages yet. Say hello!</p>
                 ) : (

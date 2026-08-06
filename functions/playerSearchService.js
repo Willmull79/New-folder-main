@@ -23,17 +23,10 @@ class PlayerSearchService {
                 console.log(`Found ${firestoreResults.length} players in Firestore`);
                 return firestoreResults;
             }
-            
-            // If no results in Firestore, fetch from ESPN API
-            console.log('No results in Firestore, fetching from ESPN API...');
-            const espnResults = await this.searchFromESPN(query, limit);
-            
-            // Store the results in Firestore for future searches
-            if (espnResults.length > 0) {
-                await this.storeSearchResults(espnResults);
-            }
-            
-            return espnResults;
+
+            // Sleeper/Firestore is the source of truth — no ESPN fallback
+            console.log('No Firestore results for player search; returning empty set');
+            return [];
         } catch (error) {
             console.error('Error searching players:', error);
             throw error;
@@ -333,57 +326,10 @@ class PlayerSearchService {
                 return players;
             }
 
-            // If no players in Firestore, fetch from ESPN API
-            console.log('No players in Firestore, fetching from ESPN API...');
-            const response = await axios.get(`${ESPN_ATHLETES_URL}?limit=1000&active=true`);
-            
-            if (!response.data || !response.data.items) {
-                console.log('No data from ESPN API, using comprehensive dataset');
-                const comprehensivePlayers = this.getComprehensivePlayerDataset();
-                await this.storeSearchResults(comprehensivePlayers);
-                return comprehensivePlayers;
-            }
-
-            // Extract athlete IDs and fetch detailed data
-            const athleteIds = response.data.items.map(item => {
-                const url = item.$ref;
-                return url.split('/').pop().split('?')[0];
-            });
-
-            const players = [];
-            const maxPlayers = Math.min(limit, 500); // Increased limit to 500 for more comprehensive data
-            
-            for (let i = 0; i < Math.min(athleteIds.length, maxPlayers); i++) {
-                try {
-                    const athleteResponse = await axios.get(`https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/${athleteIds[i]}`);
-                    const athlete = athleteResponse.data;
-                    
-                    players.push({
-                        id: athleteIds[i],
-                        name: athlete.displayName,
-                        position: athlete.position?.abbreviation || 'N/A',
-                        nflTeam: athlete.team?.abbreviation || 'N/A',
-                        jerseyNumber: athlete.jersey || 'N/A',
-                        age: athlete.age || 'N/A',
-                        height: athlete.height || 'N/A',
-                        weight: athlete.weight || 'N/A',
-                        college: athlete.college?.name || 'N/A',
-                        experience: athlete.experience?.years || 'N/A',
-                        status: athlete.status?.name || 'Active',
-                        lastUpdated: new Date().toISOString(),
-                        salary: this.calculateFantasySalary(athlete),
-                        rank: this.calculateFantasyRank(athlete)
-                    });
-                } catch (error) {
-                    console.error(`Error fetching athlete ${athleteIds[i]}:`, error);
-                    continue;
-                }
-            }
-
-            // Store in Firestore
-            await this.storeSearchResults(players);
-            
-            return players;
+            // No ESPN — rely on Sleeper sync into Firestore; local dataset only as last resort
+            console.log('No players in Firestore; using local comprehensive dataset fallback');
+            const comprehensivePlayers = this.getComprehensivePlayerDataset();
+            return comprehensivePlayers.slice(0, limit);
         } catch (error) {
             console.error('Error getting all players:', error);
             return this.getComprehensivePlayerDataset();

@@ -7,7 +7,6 @@ import {
     isTeamSalaryCapEnabled,
     isPlayerSalaryEnabled,
 } from '../constants/leagueDefaults.js';
-import { SleeperPlayerList } from './SleeperPlayerList.js';
 import {
     cloneRoster,
     findPlayerLocation,
@@ -722,15 +721,6 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
             {renderTradeProposal()}
             {renderPendingTrades()}
-
-            <div className="mt-8">
-                <SleeperPlayerList
-                    players={allPlayers}
-                    title="NFL Player Database"
-                    emptyMessage="Player data is still loading."
-                    maxHeight="24rem"
-                />
-            </div>
         </div>
     );
 };

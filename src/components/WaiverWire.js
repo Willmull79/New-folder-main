@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
-import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
+import { getPlayerDetails, getAvailablePlayers, formatProjectedPoints, getPlayerRank } from '../utils/helpers.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
 import { isFaabWaiver, isLeagueCommissioner } from '../constants/leagueDefaults.js';
 
@@ -318,7 +318,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                             <option value="">Choose a player...</option>
                             {availablePlayers.map(player => (
                                 <option key={player.id} value={player.id}>
-                                    {player.name} ({player.position} - {player.nflTeam})
+                                    #{getPlayerRank(player) ?? '—'} {player.name} ({player.position} - {player.nflTeam}) · Proj {formatProjectedPoints(player)}
                                 </option>
                             ))}
                         </select>
@@ -441,7 +441,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                                 <option value="">Choose a player...</option>
                                 {availablePlayers.map((player) => (
                                     <option key={player.id} value={player.id}>
-                                        {player.name} ({player.position} - {player.nflTeam})
+                                        #{getPlayerRank(player) ?? '—'} {player.name} ({player.position} - {player.nflTeam}) · Proj {formatProjectedPoints(player)}
                                     </option>
                                 ))}
                             </select>

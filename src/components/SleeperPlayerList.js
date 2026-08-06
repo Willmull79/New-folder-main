@@ -1,4 +1,9 @@
 import React, { useMemo, useState } from 'react';
+import {
+    formatProjectedPoints,
+    getPlayerRank,
+    sortPlayersByRankAndProjection,
+} from '../utils/helpers.js';
 import { ELIGIBLE_POSITIONS } from '../utils/sleeperPlayerService.js';
 
 const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
@@ -6,6 +11,8 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
     const fullName = [player.first_name, player.last_name].filter(Boolean).join(' ') || player.name || 'Unknown';
     const firstName = player.first_name || fullName.split(/\s+/)[0] || '—';
     const lastName = player.last_name || fullName.split(/\s+/).slice(1).join(' ') || '—';
+    const rank = getPlayerRank(player);
+    const proj = formatProjectedPoints(player);
 
     return (
         <>
@@ -15,6 +22,8 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
                     <p className="font-semibold text-white truncate">{fullName}</p>
                     <p className="text-sm text-emerald-300">
                         {player.position} · {team}
+                        {' · '}Rank {rank ?? '—'}
+                        {' · '}Proj {proj}
                     </p>
                 </div>
                 {onPlayerSelect && (
@@ -32,16 +41,20 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
             <tr className="hidden md:table-row border-t border-emerald-800 hover:bg-emerald-800/70">
                 {compact ? (
                     <>
-                        <td className="px-2 py-2 text-white truncate max-w-0 w-[45%]">{fullName}</td>
+                        <td className="px-2 py-2 text-emerald-200 whitespace-nowrap tabular-nums">{rank ?? '—'}</td>
+                        <td className="px-2 py-2 text-white truncate max-w-0 w-[40%]">{fullName}</td>
                         <td className="px-2 py-2 text-emerald-300 whitespace-nowrap">{player.position}</td>
                         <td className="px-2 py-2 text-emerald-300 whitespace-nowrap">{team}</td>
+                        <td className="px-2 py-2 text-yellow-300 whitespace-nowrap tabular-nums">{proj}</td>
                     </>
                 ) : (
                     <>
+                        <td className="px-3 py-2 text-emerald-200 tabular-nums">{rank ?? '—'}</td>
                         <td className="px-3 py-2 text-white">{firstName}</td>
                         <td className="px-3 py-2 text-white">{lastName}</td>
                         <td className="px-3 py-2 text-emerald-300">{team}</td>
                         <td className="px-3 py-2 text-emerald-300">{player.position}</td>
+                        <td className="px-3 py-2 text-yellow-300 tabular-nums">{proj}</td>
                     </>
                 )}
                 {onPlayerSelect && (
@@ -73,21 +86,26 @@ export const SleeperPlayerList = ({
     const [positionFilter, setPositionFilter] = useState('ALL');
     const [teamFilter, setTeamFilter] = useState('ALL');
 
+    const rankedPlayers = useMemo(
+        () => sortPlayersByRankAndProjection(players),
+        [players]
+    );
+
     const availableTeams = useMemo(() => {
         const teams = new Set(
-            players.map((player) => player.nflTeam || player.team || 'FA')
+            rankedPlayers.map((player) => player.nflTeam || player.team || 'FA')
         );
         return [...teams].sort((a, b) => {
             if (a === 'FA') return 1;
             if (b === 'FA') return -1;
             return a.localeCompare(b);
         });
-    }, [players]);
+    }, [rankedPlayers]);
 
     const filteredPlayers = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
 
-        return players.filter((player) => {
+        return rankedPlayers.filter((player) => {
             const team = player.nflTeam || player.team || 'FA';
             const matchesPosition = positionFilter === 'ALL' || player.position === positionFilter;
             const matchesTeam = teamFilter === 'ALL' || team === teamFilter;
@@ -102,7 +120,7 @@ export const SleeperPlayerList = ({
                 || lastName.includes(query)
                 || fullName.includes(query);
         });
-    }, [players, searchQuery, positionFilter, teamFilter]);
+    }, [rankedPlayers, searchQuery, positionFilter, teamFilter]);
 
     const filterControls = (
         <div className={`grid grid-cols-1 gap-2 w-full ${compact ? 'sm:grid-cols-3' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
@@ -143,7 +161,7 @@ export const SleeperPlayerList = ({
                 <div>
                     <h3 className="text-lg sm:text-xl font-semibold text-emerald-200">{title}</h3>
                     <p className="text-sm text-emerald-300">
-                        {filteredPlayers.length} of {players.length} players
+                        {filteredPlayers.length} of {players.length} players · sorted by rank / ESPN proj
                     </p>
                 </div>
                 {filterControls}
@@ -172,16 +190,20 @@ export const SleeperPlayerList = ({
                                 <tr>
                                     {compact ? (
                                         <>
-                                            <th className="text-left px-2 py-2 font-semibold w-[45%]">Name</th>
-                                            <th className="text-left px-2 py-2 font-semibold w-[15%]">Pos</th>
-                                            <th className="text-left px-2 py-2 font-semibold w-[20%]">Team</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[10%]">Rk</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[40%]">Name</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[12%]">Pos</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[14%]">Team</th>
+                                            <th className="text-left px-2 py-2 font-semibold w-[14%]">Proj</th>
                                         </>
                                     ) : (
                                         <>
+                                            <th className="text-left px-3 py-2 font-semibold">Rank</th>
                                             <th className="text-left px-3 py-2 font-semibold">First Name</th>
                                             <th className="text-left px-3 py-2 font-semibold">Last Name</th>
                                             <th className="text-left px-3 py-2 font-semibold">Team</th>
                                             <th className="text-left px-3 py-2 font-semibold">Pos</th>
+                                            <th className="text-left px-3 py-2 font-semibold">ESPN Proj</th>
                                         </>
                                     )}
                                     {onPlayerSelect && (

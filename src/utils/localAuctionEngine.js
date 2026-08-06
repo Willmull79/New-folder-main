@@ -20,6 +20,8 @@ const normalizePlayer = (player) => {
         team: player.nflTeam || player.team || 'FA',
         rank: player.rank || 999,
         salary: player.salary || 1,
+        projectedPoints: player.projectedPoints ?? player.projected_points ?? null,
+        espn_id: player.espn_id ?? null,
     };
 };
 
@@ -34,10 +36,18 @@ const getMinBid = (league) => {
     return Math.max(1, toFiniteNumber(settings.minPlayerSalary, 1));
 };
 
+const MIN_AUCTION_BID_TIME = 5;
+const MAX_AUCTION_BID_TIME = 30;
+const DEFAULT_AUCTION_BID_TIME = 30;
+
 const getBidSeconds = (draft) => {
-    const limit = draft.settings?.pickTimeLimit ?? draft.pickTimeLimit ?? 30;
-    if (limit == null) return 30;
-    return Math.max(10, Number(limit) || 30);
+    const limit = draft.settings?.pickTimeLimit
+        ?? draft.pickTimeLimit
+        ?? draft.auctionLive?.bidSeconds
+        ?? DEFAULT_AUCTION_BID_TIME;
+    const value = Number(limit);
+    if (!Number.isFinite(value)) return DEFAULT_AUCTION_BID_TIME;
+    return Math.min(MAX_AUCTION_BID_TIME, Math.max(MIN_AUCTION_BID_TIME, Math.round(value)));
 };
 
 const getNominationOrder = (draft, league) => {
