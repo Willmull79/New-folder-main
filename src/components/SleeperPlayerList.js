@@ -5,21 +5,40 @@ import {
     sortPlayersByRankAndProjection,
 } from '../utils/helpers.js';
 import { ELIGIBLE_POSITIONS } from '../utils/sleeperPlayerService.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 
-const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
+const resolvePlayerDisplayName = (player) => (
+    [player.first_name, player.last_name].filter(Boolean).join(' ')
+    || player.name
+    || 'Unknown'
+);
+
+const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact, onOpenSchedule }) => {
     const team = player.nflTeam || player.team || 'FA';
-    const fullName = [player.first_name, player.last_name].filter(Boolean).join(' ') || player.name || 'Unknown';
+    const fullName = resolvePlayerDisplayName(player);
     const firstName = player.first_name || fullName.split(/\s+/)[0] || '—';
     const lastName = player.last_name || fullName.split(/\s+/).slice(1).join(' ') || '—';
     const rank = getPlayerRank(player);
     const proj = formatProjectedPoints(player);
+    const schedulePlayer = {
+        ...player,
+        name: fullName,
+        nflTeam: player.nflTeam || player.team,
+    };
 
     return (
         <>
             {/* Mobile card layout */}
             <div className="md:hidden border-t border-emerald-800 p-3 flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-white truncate">{fullName}</p>
+                    <ClickablePlayerName
+                        player={schedulePlayer}
+                        onOpenSchedule={onOpenSchedule}
+                        className="font-semibold text-white truncate max-w-full"
+                    >
+                        {fullName}
+                    </ClickablePlayerName>
                     <p className="text-sm text-emerald-300">
                         {player.position} · {team}
                         {' · '}Rank {rank ?? '—'}
@@ -42,7 +61,15 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
                 {compact ? (
                     <>
                         <td className="px-2 py-2 text-emerald-200 whitespace-nowrap tabular-nums">{rank ?? '—'}</td>
-                        <td className="px-2 py-2 text-white truncate max-w-0 w-[40%]">{fullName}</td>
+                        <td className="px-2 py-2 text-white truncate max-w-0 w-[40%]">
+                            <ClickablePlayerName
+                                player={schedulePlayer}
+                                onOpenSchedule={onOpenSchedule}
+                                className="font-medium text-white truncate max-w-full"
+                            >
+                                {fullName}
+                            </ClickablePlayerName>
+                        </td>
                         <td className="px-2 py-2 text-emerald-300 whitespace-nowrap">{player.position}</td>
                         <td className="px-2 py-2 text-emerald-300 whitespace-nowrap">{team}</td>
                         <td className="px-2 py-2 text-yellow-300 whitespace-nowrap tabular-nums">{proj}</td>
@@ -50,8 +77,24 @@ const PlayerRow = ({ player, onPlayerSelect, selectLabel, compact }) => {
                 ) : (
                     <>
                         <td className="px-3 py-2 text-emerald-200 tabular-nums">{rank ?? '—'}</td>
-                        <td className="px-3 py-2 text-white">{firstName}</td>
-                        <td className="px-3 py-2 text-white">{lastName}</td>
+                        <td className="px-3 py-2 text-white">
+                            <ClickablePlayerName
+                                player={schedulePlayer}
+                                onOpenSchedule={onOpenSchedule}
+                                className="font-medium text-white"
+                            >
+                                {firstName}
+                            </ClickablePlayerName>
+                        </td>
+                        <td className="px-3 py-2 text-white">
+                            <ClickablePlayerName
+                                player={schedulePlayer}
+                                onOpenSchedule={onOpenSchedule}
+                                className="font-medium text-white"
+                            >
+                                {lastName}
+                            </ClickablePlayerName>
+                        </td>
                         <td className="px-3 py-2 text-emerald-300">{team}</td>
                         <td className="px-3 py-2 text-emerald-300">{player.position}</td>
                         <td className="px-3 py-2 text-yellow-300 tabular-nums">{proj}</td>
@@ -85,6 +128,7 @@ export const SleeperPlayerList = ({
     const [searchQuery, setSearchQuery] = useState('');
     const [positionFilter, setPositionFilter] = useState('ALL');
     const [teamFilter, setTeamFilter] = useState('ALL');
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal();
 
     const rankedPlayers = useMemo(
         () => sortPlayersByRankAndProjection(players),
@@ -181,6 +225,7 @@ export const SleeperPlayerList = ({
                                     onPlayerSelect={onPlayerSelect}
                                     selectLabel={selectLabel}
                                     compact={compact}
+                                    onOpenSchedule={openSchedule}
                                 />
                             ))}
                         </div>
@@ -221,6 +266,7 @@ export const SleeperPlayerList = ({
                                         onPlayerSelect={onPlayerSelect}
                                         selectLabel={selectLabel}
                                         compact={compact}
+                                        onOpenSchedule={openSchedule}
                                     />
                                 ))}
                             </tbody>
@@ -230,6 +276,7 @@ export const SleeperPlayerList = ({
                     <p className="px-3 py-8 text-center text-emerald-300">{emptyMessage}</p>
                 )}
             </div>
+            {scheduleModal}
         </div>
     );
 };

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { getPlayerDetails, getAvailablePlayers, formatProjectedPoints, getPlayerRank } from '../utils/helpers.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 import { isFaabWaiver, isLeagueCommissioner } from '../constants/leagueDefaults.js';
 
 // Import firebase globally (it's loaded in the HTML)
@@ -15,6 +17,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
     const [bidAmount, setBidAmount] = useState(1);
     const [teamsData, setTeamsData] = useState([]);
     const [availablePlayers, setAvailablePlayers] = useState([]);
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal();
 
     const useFaabWaivers = isFaabWaiver(currentLeague?.settings);
     const isAuctionComplete = currentLeague?.auction?.status === 'complete';
@@ -374,7 +377,13 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                                 <div key={claim.id} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
                                     <div className="flex justify-between items-start mb-3">
                                         <div>
-                                            <h4 className="text-lg font-semibold text-white">{player?.name}</h4>
+                                            <h4 className="text-lg font-semibold text-white">
+                                                <ClickablePlayerName
+                                                    player={player}
+                                                    onOpenSchedule={openSchedule}
+                                                    className="text-lg font-semibold text-white"
+                                                />
+                                            </h4>
                                             <p className="text-emerald-300">{player?.position} - {player?.nflTeam}</p>
                                         </div>
                                         <div className="text-right">
@@ -484,7 +493,13 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
                                     <div key={claim.id} className="bg-emerald-800 p-4 rounded-lg border-2 border-emerald-600">
                                         <div className="flex justify-between items-start mb-3">
                                             <div>
-                                                <h4 className="text-lg font-semibold text-white">{player?.name}</h4>
+                                                <h4 className="text-lg font-semibold text-white">
+                                                    <ClickablePlayerName
+                                                        player={player}
+                                                        onOpenSchedule={openSchedule}
+                                                        className="text-lg font-semibold text-white"
+                                                    />
+                                                </h4>
                                                 <p className="text-emerald-300">{player?.position} - {player?.nflTeam}</p>
                                             </div>
                                             <div className="text-right">
@@ -541,6 +556,7 @@ export const WaiverWire = ({ currentLeague, currentTeam, allPlayers, showMessage
             </div>
 
             {useFaabWaivers ? renderAuctionWaivers() : renderPriorityWaivers()}
+            {scheduleModal}
         </div>
     );
 };

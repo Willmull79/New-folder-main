@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
+import { ConfirmationModal } from './ConfirmationModal.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 import { getPlayerDetails, getAvailablePlayers } from '../utils/helpers.js';
 import {
     buildLineupDisplayOrder,
@@ -20,6 +23,8 @@ export const CommissionerRosterEditor = ({ currentLeague, teamsData = [], allPla
     const [addDestination, setAddDestination] = useState('bench');
     const [searchQuery, setSearchQuery] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [playerIdPendingDrop, setPlayerIdPendingDrop] = useState(null);
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal();
 
     const leagueSettings = currentLeague?.settings || {};
     const rosterLimits = leagueSettings.rosterLimits || INITIAL_ROSTER_LIMITS;
@@ -90,6 +95,26 @@ export const CommissionerRosterEditor = ({ currentLeague, teamsData = [], allPla
             setIsSaving(false);
         }
     };
+
+    const requestDropPlayer = (playerId) => {
+        if (!playerId || isSaving) return;
+        setPlayerIdPendingDrop(playerId);
+    };
+
+    const confirmDropPlayer = async () => {
+        const playerId = playerIdPendingDrop;
+        setPlayerIdPendingDrop(null);
+        if (!playerId) return;
+        await handleDropPlayer(playerId);
+    };
+
+    const cancelDropPlayer = () => {
+        setPlayerIdPendingDrop(null);
+    };
+
+    const playerPendingDrop = playerIdPendingDrop
+        ? getPlayerDetails(playerIdPendingDrop, allPlayers)
+        : null;
 
     const handleAddPlayer = async () => {
         if (!db || !currentLeague?.id || !selectedTeam?.id) return;
@@ -169,15 +194,23 @@ export const CommissionerRosterEditor = ({ currentLeague, teamsData = [], allPla
             >
                 <div className="min-w-0">
                     <p className="text-xs uppercase tracking-wide text-emerald-400">{locationLabel}</p>
-                    <p className="text-sm font-semibold text-white truncate">
-                        {player?.name
-                            ? formatPlayerLabel(player, leagueSettings)
-                            : `${playerId} (missing player data)`}
-                    </p>
+                    {player?.name ? (
+                        <ClickablePlayerName
+                            player={player}
+                            onOpenSchedule={openSchedule}
+                            className="text-sm font-semibold text-white truncate max-w-full"
+                        >
+                            {formatPlayerLabel(player, leagueSettings)}
+                        </ClickablePlayerName>
+                    ) : (
+                        <p className="text-sm font-semibold text-white truncate">
+                            {`${playerId} (missing player data)`}
+                        </p>
+                    )}
                 </div>
                 <button
                     type="button"
-                    onClick={() => handleDropPlayer(playerId)}
+                    onClick={() => requestDropPlayer(playerId)}
                     disabled={isSaving}
                     className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-md disabled:opacity-50 flex-shrink-0"
                 >
@@ -310,6 +343,27 @@ export const CommissionerRosterEditor = ({ currentLeague, teamsData = [], allPla
                     </div>
                 </div>
             )}
+
+            <ConfirmationModal
+                isOpen={Boolean(playerIdPendingDrop)}
+                onClose={cancelDropPlayer}
+                onConfirm={confirmDropPlayer}
+                title="Drop Player?"
+                confirmLabel="Yes"
+                cancelLabel="No"
+            >
+                Are you sure you want to drop{' '}
+                <span className="font-semibold text-white">
+                    {playerPendingDrop?.name || 'this player'}
+                </span>
+                {selectedTeam?.teamName ? (
+                    <>
+                        {' '}from <span className="font-semibold text-white">{selectedTeam.teamName}</span>
+                    </>
+                ) : null}
+                ?
+            </ConfirmationModal>
+            {scheduleModal}
         </div>
     );
 };

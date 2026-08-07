@@ -6,6 +6,8 @@ import draftService from '../utils/draftService.js';
 import { playTurnNotification } from '../utils/turnNotificationSound.js';
 import { ConfirmationModal } from './ConfirmationModal.js';
 import { SleeperPlayerList } from './SleeperPlayerList.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 import {
     MAX_ROUNDS,
 } from '../utils/draftOrderUtils.js';
@@ -27,6 +29,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
     const [isDragging, setIsDragging] = useState(false);
     const [playerSearchQuery, setPlayerSearchQuery] = useState('');
     const [filteredPlayers, setFilteredPlayers] = useState([]);
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal({ prefetch: false });
 
     // Draft Room States
     const [timeRemaining, setTimeRemaining] = useState(0);
@@ -819,7 +822,11 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                         onDragEnd={handleDragEnd}
                                     >
                                         <div className="flex-1">
-                                            <div className="font-semibold">{player.name}</div>
+                                            <ClickablePlayerName
+                                                player={player}
+                                                onOpenSchedule={openSchedule}
+                                                className="font-semibold text-white"
+                                            />
                                             <div className="text-sm text-emerald-300">
                                                 {player.position} • {player.nflTeam} • Rank: {getPlayerRank(player) ?? '—'} • Proj: {formatProjectedPoints(player)}
                                             </div>
@@ -863,7 +870,11 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                         
                                         {player ? (
                                             <div>
-                                                <div className="font-semibold text-sm">{player.name}</div>
+                                                <ClickablePlayerName
+                                                    player={player}
+                                                    onOpenSchedule={openSchedule}
+                                                    className="font-semibold text-sm text-white"
+                                                />
                                                 <div className="text-xs text-emerald-300">
                                                     {player.position} • {player.nflTeam} • Rank: {getPlayerRank(player) ?? '—'} • Proj: {formatProjectedPoints(player)}
                                                 </div>
@@ -1020,7 +1031,12 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                 </div>
                                 {isAuctionDraft && auctionPlayer && (
                                     <div className="text-lg text-purple-200">
-                                        Bidding on: {auctionPlayer.name}
+                                        Bidding on:{' '}
+                                        <ClickablePlayerName
+                                            player={auctionPlayer}
+                                            onOpenSchedule={openSchedule}
+                                            className="text-lg text-purple-200 font-semibold"
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -1045,7 +1061,12 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                 {auctionLive?.isActive && auctionPlayer ? (
                                     <div className="space-y-3">
                                         <p className="text-lg text-white">
-                                            Bidding on: <span className="font-bold">{auctionPlayer.name}</span>
+                                            Bidding on:{' '}
+                                            <ClickablePlayerName
+                                                player={auctionPlayer}
+                                                onOpenSchedule={openSchedule}
+                                                className="font-bold text-white text-lg"
+                                            />
                                             {' '}({auctionPlayer.position} · {auctionPlayer.nflTeam})
                                         </p>
                                         <p className="text-purple-200">
@@ -1110,7 +1131,11 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                 <div className="space-y-2 max-h-64 overflow-y-auto">
                                     {(draftData?.draftedPlayers || []).slice().reverse().map((player, index) => (
                                         <div key={`${player.id}-${index}`} className="p-2 bg-emerald-800 rounded text-sm">
-                                            <span className="font-semibold text-white">{player.name}</span>
+                                            <ClickablePlayerName
+                                                player={player}
+                                                onOpenSchedule={openSchedule}
+                                                className="font-semibold text-white text-sm"
+                                            />
                                             <span className="text-emerald-300">
                                                 {' '}· ${player.bid ?? player.salary ?? '?'} ·{' '}
                                                 {teamsData.find((t) => t.id === player.teamId)?.teamName || 'Unknown'}
@@ -1166,7 +1191,11 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                                             <div className="text-[10px] text-emerald-400 mb-0.5">Slot {slotNumber}</div>
                                                             {draftedPlayer ? (
                                                                 <div>
-                                                                    <div className="font-semibold text-xs truncate">{draftedPlayer.name}</div>
+                                                                    <ClickablePlayerName
+                                                                        player={draftedPlayer}
+                                                                        onOpenSchedule={openSchedule}
+                                                                        className="font-semibold text-xs truncate max-w-full text-white"
+                                                                    />
                                                                     <div className="text-[10px] text-emerald-300 truncate">
                                                                         {draftedPlayer.position} • {draftedPlayer.nflTeam}
                                                                     </div>
@@ -1204,7 +1233,11 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
                                                             <div className="text-[10px] text-emerald-400 mb-0.5">Slot {slotNumber}</div>
                                                             {draftedPlayer ? (
                                                                 <div>
-                                                                    <div className="font-semibold text-xs truncate">{draftedPlayer.name}</div>
+                                                                    <ClickablePlayerName
+                                                                        player={draftedPlayer}
+                                                                        onOpenSchedule={openSchedule}
+                                                                        className="font-semibold text-xs truncate max-w-full text-white"
+                                                                    />
                                                                     <div className="text-[10px] text-emerald-300 truncate">
                                                                         {draftedPlayer.position} • {draftedPlayer.nflTeam}
                                                                     </div>
@@ -1265,6 +1298,7 @@ const DraftCenter = ({ currentLeague, currentTeam, allPlayers, showMessage, curr
             >
                 Stop the draft now? The current draft will be marked complete and no more picks can be made.
             </ConfirmationModal>
+            {scheduleModal}
         </div>
     );
 };

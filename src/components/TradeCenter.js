@@ -14,6 +14,8 @@ import {
     placePlayerInOpenSlot,
     removePlayerFromRoster,
 } from '../utils/tradeRosterUtils.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 
 const firebase = window.firebase;
 
@@ -35,6 +37,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
     const [selectedTeams, setSelectedTeams] = useState([]);
     const [tradeOffers, setTradeOffers] = useState({});
     const [teamToAdd, setTeamToAdd] = useState('');
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal();
     const leagueSettings = currentLeague?.settings || {};
     const salaryRulesEnabled = isTeamSalaryCapEnabled(leagueSettings) && isPlayerSalaryEnabled(leagueSettings);
 
@@ -494,9 +497,18 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                             <div className="mb-4">
                                 <h5 className="text-sm font-medium text-emerald-300 mb-2">Players offering:</h5>
                                 <div className="space-y-2">
-                                    {(offer.players || []).map((player, index) => (
+                                    {(offer.players || []).map((player, index) => {
+                                        const fullPlayer = getPlayerDetails(player.id, allPlayers) || player;
+                                        return (
                                         <div key={`${player.id}-${index}`} className="flex justify-between items-center bg-emerald-700 p-2 rounded">
-                                            <span className="text-white text-sm">{player.name} ({player.position})</span>
+                                            <span className="text-white text-sm">
+                                                <ClickablePlayerName
+                                                    player={fullPlayer}
+                                                    onOpenSchedule={openSchedule}
+                                                    className="text-white text-sm"
+                                                />
+                                                {' '}({player.position})
+                                            </span>
                                             <button
                                                 type="button"
                                                 onClick={() => removePlayerFromTrade(teamId, index)}
@@ -505,7 +517,8 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                                 ×
                                             </button>
                                         </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
 
                                 <div className="mt-3">
@@ -637,11 +650,19 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
                                             <div key={teamId} className="bg-emerald-700 p-3 rounded">
                                                 <h5 className="font-semibold text-white mb-2">{team?.teamName}</h5>
                                                 <ul className="text-sm text-emerald-200 space-y-1">
-                                                    {(offer?.players || []).map((player) => (
+                                                    {(offer?.players || []).map((player) => {
+                                                        const fullPlayer = getPlayerDetails(player.id, allPlayers) || player;
+                                                        return (
                                                         <li key={player.id}>
-                                                            {player.name} ({player.position})
+                                                            <ClickablePlayerName
+                                                                player={fullPlayer}
+                                                                onOpenSchedule={openSchedule}
+                                                                className="text-emerald-200 text-sm"
+                                                            />
+                                                            {' '}({player.position})
                                                         </li>
-                                                    ))}
+                                                        );
+                                                    })}
                                                     {(offer?.draftPicks || []).map((pick, idx) => (
                                                         <li key={`${pick.year}-${pick.round}-${idx}`}>
                                                             {pick.year} Round {pick.round}
@@ -723,6 +744,7 @@ export const TradeCenter = ({ currentLeague, currentTeam, allPlayers, showMessag
 
             {renderTradeProposal()}
             {renderPendingTrades()}
+            {scheduleModal}
         </div>
     );
 };

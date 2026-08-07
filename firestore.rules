@@ -9,6 +9,7 @@ service cloud.firestore {
     //   commissionerId, coCommissioners, memberIds, teams, settings, draft, ...
     // leagues/{leagueId}/teams|messages|trades|waivers|notifications/...
     // rankings/master_list — aggregated NFL rankings (Admin/Cloud Function write only)
+    // schedules/nfl_YYYY — NFL team weekly matchups (Admin/Cloud Function write only)
     // players|teams|games|scores|stats|data_updates — legacy NFL reference (Admin write)
     // ===============================================================
 
@@ -106,6 +107,14 @@ service cloud.firestore {
     // ---------- Aggregated NFL rankings (single-doc pattern) ----------
     // Cloud Functions / Admin SDK write only — no client writes.
     match /rankings/{docId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && hasSafeQueryLimit();
+      allow create, update, delete: if false;
+    }
+
+    // ---------- NFL team schedules (single-doc pattern, e.g. schedules/nfl_2026) ----------
+    // Cloud Functions / Admin SDK write only — authenticated clients may read.
+    match /schedules/{docId} {
       allow get: if isSignedIn();
       allow list: if isSignedIn() && hasSafeQueryLimit();
       allow create, update, delete: if false;

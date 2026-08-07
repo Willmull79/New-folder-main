@@ -5,6 +5,8 @@ import backgroundScoring, {
     fetchSleeperNflState,
     fetchSleeperWeekStats,
 } from '../utils/backgroundScoring.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 
 const buildPlayerMeta = (allPlayers = []) => {
     const meta = {};
@@ -41,6 +43,7 @@ const LiveScores = ({
     const showMessageRef = useRef(showMessage);
     const teamsDataRef = useRef([]);
     const hasScoredRef = useRef(false);
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal();
 
     useEffect(() => {
         showMessageRef.current = showMessage;
@@ -311,7 +314,18 @@ const LiveScores = ({
                                                                     {player.slot}
                                                                 </td>
                                                                 <td className="py-2 px-3 text-white">
-                                                                    {player.name || player.playerId}
+                                                                    <ClickablePlayerName
+                                                                        player={{
+                                                                            id: player.playerId,
+                                                                            name: player.name || player.playerId,
+                                                                            position: player.position,
+                                                                            nflTeam: player.nflTeam,
+                                                                        }}
+                                                                        onOpenSchedule={openSchedule}
+                                                                        className="text-white"
+                                                                    >
+                                                                        {player.name || player.playerId}
+                                                                    </ClickablePlayerName>
                                                                     {player.position ? (
                                                                         <span className="text-emerald-400">
                                                                             {' '}({player.position}
@@ -340,6 +354,7 @@ const LiveScores = ({
                     </div>
                 )}
             </div>
+            {scheduleModal}
         </div>
     );
 };

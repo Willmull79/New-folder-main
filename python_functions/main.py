@@ -5,6 +5,8 @@ Runs at 3:00 AM Eastern via Cloud Scheduler (2nd gen).
 Builds the FULL fantasy-eligible Sleeper player pool (~1900), merges ESPN
 projected points where available, and writes everything to rankings/master_list
 as one array (1 client read instead of thousands).
+
+Also syncs the NFL team schedule → schedules/nfl_2026 (team abbr → weekly matchups).
 """
 
 import json
@@ -21,6 +23,62 @@ SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 ESPN_URL = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/"
     "seasons/2026/segments/0/leaguedefaults/1?view=kona_player_info"
+)
+# Full regular-season slate by week (seasontype=2). One request per week.
+ESPN_SCHEDULE_URL = (
+    "https://cdn.espn.com/core/nfl/schedule"
+    "?xhr=1&year={year}&seasontype=2&week={week}"
+)
+NFL_SCHEDULE_SEASON = 2026
+NFL_SCHEDULE_WEEKS = range(1, 19)  # 18-week season; each team plays 17 games + 1 bye
+SCHEDULE_DOC_PATH = ("schedules", f"nfl_{NFL_SCHEDULE_SEASON}")
+
+# ESPN scoreboard abbreviations → Sleeper-standard abbreviations.
+# Most match 1:1; document mismatches explicitly.
+ESPN_TO_SLEEPER_ABBR = {
+    "WSH": "WAS",  # Washington Commanders (ESPN) → WAS (Sleeper)
+    "WAS": "WAS",
+    "LAR": "LAR",  # Los Angeles Rams (both); some feeds use LA
+    "LA": "LAR",
+    "LAC": "LAC",
+    "JAX": "JAX",  # Jacksonville (both); some feeds use JAC
+    "JAC": "JAX",
+    "LV": "LV",  # Las Vegas Raiders (current); Sleeper may still show OAK on old rows
+    "OAK": "LV",
+    "ARI": "ARI",
+    "ATL": "ATL",
+    "BAL": "BAL",
+    "BUF": "BUF",
+    "CAR": "CAR",
+    "CHI": "CHI",
+    "CIN": "CIN",
+    "CLE": "CLE",
+    "DAL": "DAL",
+    "DEN": "DEN",
+    "DET": "DET",
+    "GB": "GB",
+    "HOU": "HOU",
+    "IND": "IND",
+    "KC": "KC",
+    "MIA": "MIA",
+    "MIN": "MIN",
+    "NE": "NE",
+    "NO": "NO",
+    "NYG": "NYG",
+    "NYJ": "NYJ",
+    "PHI": "PHI",
+    "PIT": "PIT",
+    "SEA": "SEA",
+    "SF": "SF",
+    "TB": "TB",
+    "TEN": "TEN",
+}
+
+SLEEPER_TEAM_ABBREVIATIONS = (
+    "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",
+    "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC",
+    "LAC", "LAR", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+    "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS",
 )
 ESPN_FILTER = {
     "players": {
@@ -220,5 +278,179 @@ def sync_espn_projections(event: scheduler_fn.ScheduledEvent) -> None:
     print(
         f"Done. wrote rankings/master_list count={len(ranked)} "
         f"espn_enriched={espn_enriched} espn_skipped={espn_skipped} "
+        f"job={event.job_name} schedule_time={event.schedule_time}"
+    )
+
+
+def map_espn_abbr(espn_abbr):
+    """Normalize an ESPN team abbreviation to Sleeper's standard."""
+    if not espn_abbr:
+        return None
+    key = str(espn_abbr).strip().upper()
+    return ESPN_TO_SLEEPER_ABBR.get(key, key)
+
+
+def fetch_espn_week_games(year, week):
+    """Fetch one regular-season week from ESPN CDN schedule API."""
+    url = ESPN_SCHEDULE_URL.format(year=year, week=week)
+    resp = requests.get(url, timeout=60)
+    resp.raise_for_status()
+    content = (resp.json() or {}).get("content") or {}
+    schedule_by_day = content.get("schedule") or {}
+    games = []
+    for day_payload in schedule_by_day.values():
+        if not isinstance(day_payload, dict):
+            continue
+        for game in day_payload.get("games") or []:
+            games.append(game)
+    return games
+
+
+def parse_game_competitors(game):
+    """
+    Return (home_abbr, away_abbr, week_number, date_iso) using Sleeper abbrs.
+    Skips games that lack two NFL competitors.
+    """
+    competitions = game.get("competitions") or []
+    if not competitions:
+        return None
+    competition = competitions[0] or {}
+    competitors = competition.get("competitors") or []
+    home_abbr = None
+    away_abbr = None
+    for competitor in competitors:
+        team = competitor.get("team") or {}
+        abbr = map_espn_abbr(team.get("abbreviation"))
+        home_away = (competitor.get("homeAway") or "").lower()
+        if home_away == "home":
+            home_abbr = abbr
+        elif home_away == "away":
+            away_abbr = abbr
+    if not home_abbr or not away_abbr:
+        return None
+
+    week_obj = game.get("week") or {}
+    week_number = week_obj.get("number")
+    try:
+        week_number = int(week_number)
+    except (TypeError, ValueError):
+        return None
+
+    date_iso = game.get("date") or competition.get("date")
+    return home_abbr, away_abbr, week_number, date_iso
+
+
+def build_team_schedules(year=NFL_SCHEDULE_SEASON):
+    """
+    Build {SleeperAbbr: [{week, opponent, homeAway, date?}, ...]} for all 32 teams.
+    Each team gets 17 regular-season games (bye omitted from the matchup array).
+    """
+    teams = {abbr: [] for abbr in SLEEPER_TEAM_ABBREVIATIONS}
+    games_seen = set()
+    total_games = 0
+
+    for week in NFL_SCHEDULE_WEEKS:
+        print(f"Fetching ESPN NFL schedule year={year} week={week}...")
+        week_games = fetch_espn_week_games(year, week)
+        for game in week_games:
+            parsed = parse_game_competitors(game)
+            if not parsed:
+                continue
+            home_abbr, away_abbr, week_number, date_iso = parsed
+            game_id = game.get("id") or f"{week_number}:{away_abbr}@{home_abbr}"
+            if game_id in games_seen:
+                continue
+            games_seen.add(game_id)
+            total_games += 1
+
+            if home_abbr in teams:
+                entry = {
+                    "week": week_number,
+                    "opponent": away_abbr,
+                    "homeAway": "home",
+                }
+                if date_iso:
+                    entry["date"] = date_iso
+                teams[home_abbr].append(entry)
+
+            if away_abbr in teams:
+                entry = {
+                    "week": week_number,
+                    "opponent": home_abbr,
+                    "homeAway": "away",
+                }
+                if date_iso:
+                    entry["date"] = date_iso
+                teams[away_abbr].append(entry)
+
+    bye_weeks = {}
+    for abbr, matchups in teams.items():
+        matchups.sort(key=lambda m: (m.get("week") or 0, m.get("date") or ""))
+        played_weeks = {m["week"] for m in matchups if m.get("week") is not None}
+        bye = sorted(set(NFL_SCHEDULE_WEEKS) - played_weeks)
+        if len(bye) == 1:
+            bye_weeks[abbr] = bye[0]
+        elif bye:
+            bye_weeks[abbr] = bye  # unexpected multi-bye — keep list for debugging
+
+    return teams, bye_weeks, total_games
+
+
+@scheduler_fn.on_schedule(
+    schedule="0 4 * * 1",
+    timezone=scheduler_fn.Timezone("America/New_York"),
+    memory=options.MemoryOption.MB_512,
+    timeout_sec=300,
+)
+def sync_nfl_schedule(event: scheduler_fn.ScheduledEvent) -> None:
+    """
+    Weekly sync of the full NFL regular-season schedule into schedules/nfl_2026.
+
+    Document shape:
+      {
+        season: 2026,
+        source: "espn",
+        updatedAt: ISO-8601,
+        gameCount: int,
+        byeWeeks: { "KC": 6, ... },
+        teams: {
+          "KC": [{ week, opponent, homeAway, date? }, ...],  # 17 games
+          ...
+        }
+      }
+    """
+    db = firestore.client()
+    print(f"Building NFL {NFL_SCHEDULE_SEASON} schedule from ESPN...")
+    teams, bye_weeks, game_count = build_team_schedules(NFL_SCHEDULE_SEASON)
+
+    missing = [abbr for abbr, games in teams.items() if len(games) == 0]
+    short = {abbr: len(games) for abbr, games in teams.items() if 0 < len(games) < 17}
+    if missing:
+        print(f"WARNING: teams with no games: {missing}")
+    if short:
+        print(f"WARNING: teams with fewer than 17 games: {short}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    schedule_ref = db.collection(SCHEDULE_DOC_PATH[0]).document(SCHEDULE_DOC_PATH[1])
+    schedule_ref.set(
+        {
+            "season": NFL_SCHEDULE_SEASON,
+            "source": "espn",
+            "updatedAt": now,
+            "gameCount": game_count,
+            "teamCount": len(teams),
+            "byeWeeks": bye_weeks,
+            "teams": teams,
+            "abbrMappingNotes": (
+                "ESPN→Sleeper: WSH→WAS, LA→LAR, JAC→JAX, OAK→LV; others 1:1"
+            ),
+        },
+        merge=False,
+    )
+
+    sample_counts = {abbr: len(games) for abbr, games in list(teams.items())[:5]}
+    print(
+        f"Done. wrote schedules/nfl_{NFL_SCHEDULE_SEASON} "
+        f"games={game_count} teams={len(teams)} sample_counts={sample_counts} "
         f"job={event.job_name} schedule_time={event.schedule_time}"
     )

@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { Avatar } from './Avatar.js';
+import { ConfirmationModal } from './ConfirmationModal.js';
+import { ClickablePlayerName } from './ClickablePlayerName.js';
 import { getPlayerDetails, getAvailablePlayers, formatProjectedPoints, getPlayerRank } from '../utils/helpers.js';
 import { useAutoSetLineup } from '../hooks/useAutoSetLineup.js';
+import { usePlayerScheduleModal } from '../hooks/usePlayerScheduleModal.js';
 import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
 import {
     getCachedWeekProjections,
@@ -42,6 +45,7 @@ const RosterPlayerSlot = ({
     weekProjection = 0,
     projectionWeek = null,
     actions = null,
+    onOpenSchedule = null,
 }) => {
     const showSalary = player && isPlayerSalaryEnabled(leagueSettings);
     const projLabel = projectionWeek != null ? `Week ${projectionWeek} Proj` : 'Week Proj';
@@ -73,7 +77,11 @@ const RosterPlayerSlot = ({
                     </div>
                     <div className="min-w-0 flex-1">
                         <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${slotLabelClassName}`}>{slotLabel}</p>
-                        <h4 className="text-base font-semibold text-white leading-snug break-words">{player.name}</h4>
+                        <ClickablePlayerName
+                            player={player}
+                            onOpenSchedule={onOpenSchedule}
+                            className="text-base font-semibold text-white leading-snug break-words"
+                        />
                         <p className="text-sm text-emerald-300 mt-0.5">
                             {player.position}
                             {player.nflTeam ? ` · ${player.nflTeam}` : ''}
@@ -126,7 +134,13 @@ const RosterPlayerSlot = ({
                     <div className="h-8 w-8 rounded-full bg-emerald-950 border border-emerald-600 flex items-center justify-center text-xs font-bold text-emerald-100 flex-shrink-0">
                         {playerInitials(player.name)}
                     </div>
-                    <span className="truncate">{formatPlayerLabel(player, leagueSettings)}</span>
+                    <ClickablePlayerName
+                        player={player}
+                        onOpenSchedule={onOpenSchedule}
+                        className="truncate font-medium text-white"
+                    >
+                        {formatPlayerLabel(player, leagueSettings)}
+                    </ClickablePlayerName>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                     <div className="text-right min-w-[4.5rem]">
@@ -155,6 +169,8 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
     const [waiverPosition, setWaiverPosition] = useState(1);
     const [weekProjectionsByPlayer, setWeekProjectionsByPlayer] = useState({});
     const [projectionWeek, setProjectionWeek] = useState(null);
+    const [playerIdPendingDrop, setPlayerIdPendingDrop] = useState(null);
+    const { openSchedule, scheduleModal } = usePlayerScheduleModal();
     const playerSelectRef = useRef(null);
     const rosterLimits = currentLeague?.settings?.rosterLimits || INITIAL_ROSTER_LIMITS;
     const leagueSettings = currentLeague?.settings || {};
@@ -338,6 +354,26 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
         }
     };
 
+    const requestDropPlayer = (playerId) => {
+        if (!playerId) return;
+        setPlayerIdPendingDrop(playerId);
+    };
+
+    const confirmDropPlayer = async () => {
+        const playerId = playerIdPendingDrop;
+        setPlayerIdPendingDrop(null);
+        if (!playerId) return;
+        await handleRemovePlayer(playerId);
+    };
+
+    const cancelDropPlayer = () => {
+        setPlayerIdPendingDrop(null);
+    };
+
+    const playerPendingDrop = playerIdPendingDrop
+        ? getPlayerDetails(playerIdPendingDrop, allPlayers)
+        : null;
+
     const handleMovePlayer = async (playerId, from, to) => {
         const newRoster = JSON.parse(JSON.stringify(teamData.roster));
 
@@ -423,7 +459,8 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
 
     const dropButton = (playerId) => (
         <button
-            onClick={() => handleRemovePlayer(playerId)}
+            type="button"
+            onClick={() => requestDropPlayer(playerId)}
             className="px-3 py-2 md:py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md touch-target"
         >
             Drop
@@ -476,6 +513,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                     leagueSettings={leagueSettings}
                                     weekProjection={resolveWeekProjection(playerId)}
                                     projectionWeek={projectionWeek}
+                                    onOpenSchedule={openSchedule}
                                     actions={player ? (
                                         <>
                                             <PlayerActions playerId={playerId} from={slot} />
@@ -502,6 +540,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                         leagueSettings={leagueSettings}
                                         weekProjection={resolveWeekProjection(playerId)}
                                         projectionWeek={projectionWeek}
+                                        onOpenSchedule={openSchedule}
                                         actions={player ? (
                                             <>
                                                 <PlayerActions playerId={playerId} from="bench" />
@@ -528,6 +567,7 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                                         leagueSettings={leagueSettings}
                                         weekProjection={resolveWeekProjection(playerId)}
                                         projectionWeek={projectionWeek}
+                                        onOpenSchedule={openSchedule}
                                         actions={player ? (
                                             <>
                                                 <PlayerActions playerId={playerId} from="ir" />
@@ -588,6 +628,23 @@ export const Roster = ({ teamData, allPlayers, showMessage, currentLeague, handl
                     )}
                 </div>
             </div>
+
+            <ConfirmationModal
+                isOpen={Boolean(playerIdPendingDrop)}
+                onClose={cancelDropPlayer}
+                onConfirm={confirmDropPlayer}
+                title="Drop Player?"
+                confirmLabel="Yes"
+                cancelLabel="No"
+            >
+                Are you sure you want to drop{' '}
+                <span className="font-semibold text-white">
+                    {playerPendingDrop?.name || 'this player'}
+                </span>
+                ? This cannot be undone from here — they will return to free agency / waivers.
+            </ConfirmationModal>
+
+            {scheduleModal}
         </div>
     );
 };
