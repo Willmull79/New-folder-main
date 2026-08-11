@@ -73,12 +73,13 @@ export const clearAllInviteState = () => {
     clearInviteLoginGate();
 };
 
-/** True if this user is already commissioner, co-commissioner, listed in members, or owns a team. */
+/** True if this user is already commissioner, co-commissioner, listed in members/memberIds, or owns a team. */
 export const isUserAlreadyInLeague = (leagueData, userId, existingTeamId = null) => {
     if (!leagueData || !userId) return false;
     if (existingTeamId) return true;
     if (leagueData.commissionerId === userId) return true;
     if (Array.isArray(leagueData.coCommissioners) && leagueData.coCommissioners.includes(userId)) return true;
+    if (Array.isArray(leagueData.memberIds) && leagueData.memberIds.includes(userId)) return true;
     if (Array.isArray(leagueData.members) && leagueData.members.includes(userId)) return true;
     return false;
 };
@@ -105,8 +106,19 @@ export const joinLeagueAsUser = async ({ db, leagueId, userId, userDisplayName }
     }
 
     const leagueData = leagueDoc.data() || {};
-    const existingTeamQuery = await teamsCollectionRef.where('ownerId', '==', userId).limit(1).get();
-    const existingTeamId = existingTeamQuery.empty ? null : existingTeamQuery.docs[0].id;
+    let existingTeamId = null;
+    try {
+        // Non-members need rules that allow owner-scoped team list queries.
+        const existingTeamQuery = await teamsCollectionRef.where('ownerId', '==', userId).limit(1).get();
+        existingTeamId = existingTeamQuery.empty ? null : existingTeamQuery.docs[0].id;
+    } catch (error) {
+        const code = error?.code || '';
+        const message = String(error?.message || '');
+        const permissionDenied = code === 'permission-denied' || /insufficient permissions|permission/i.test(message);
+        if (!permissionDenied) throw error;
+        // Proceed as a new joiner; create path + self-join update still apply.
+        existingTeamId = null;
+    }
 
     // Safety check: never re-add someone already in the league
     if (isUserAlreadyInLeague(leagueData, userId, existingTeamId)) {

@@ -27,10 +27,11 @@ import { CommissionerTradeUndo } from './CommissionerTradeUndo.js';
 import { AutoSetLineupToggle } from './AutoSetLineupToggle.js';
 import { appId } from '../config/firebase.js';
 import { commitTeamAutoSetLineup } from '../utils/commitTeamAutoSetLineup.js';
+import { deleteLeagueCompletely } from '../utils/deleteLeague.js';
 
 const firebase = window.firebase;
 
-export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onLeagueUpdate, allPlayers = [] }) => {
+export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onLeagueUpdate, onLeagueDeleted, allPlayers = [] }) => {
     const { db, userId } = useFirebase();
     const [teamsData, setTeamsData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -154,13 +155,18 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
 
         setIsLoading(true);
         try {
-            // Remove team from league
             const leagueRef = db.doc(`leagues/${currentLeague.id}`);
-                            await leagueRef.update({
-                    teams: firebase.firestore.FieldValue.arrayRemove(selectedTeamToDelete.id)
-                });
+            const ownerId = selectedTeamToDelete.ownerId;
+            const leagueUpdate = {
+                teams: firebase.firestore.FieldValue.arrayRemove(selectedTeamToDelete.id),
+            };
+            // Drop membership so the owner no longer sees this league as active.
+            if (ownerId) {
+                leagueUpdate.memberIds = firebase.firestore.FieldValue.arrayRemove(ownerId);
+                leagueUpdate.members = firebase.firestore.FieldValue.arrayRemove(ownerId);
+            }
+            await leagueRef.update(leagueUpdate);
 
-            // Delete team document
             const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${selectedTeamToDelete.id}`);
             await teamRef.delete();
 
@@ -494,33 +500,24 @@ export const CommissionerTools = ({ currentLeague, currentTeam, showMessage, onL
 
 
     const handleDeleteLeague = async () => {
-        if (!db || !currentLeague?.id) return;
+        if (!currentLeague?.id) return;
 
         setIsLoading(true);
         try {
-            // Delete all team documents
-            const batch = db.batch();
-            
-            teamsData.forEach(team => {
-                const teamRef = db.doc(`leagues/${currentLeague.id}/teams/${team.id}`);
-                batch.delete(teamRef);
-            });
-
-            // Delete the league document
-            const leagueRef = db.doc(`leagues/${currentLeague.id}`);
-            batch.delete(leagueRef);
-
-            await batch.commit();
+            // Admin recursiveDelete via Cloud Function (client fallback if needed).
+            await deleteLeagueCompletely(currentLeague.id);
             showMessage("League has been deleted successfully.", "success");
             setShowDeleteLeagueModal(false);
-            
-            // Redirect to league selector or refresh
-            if (onLeagueUpdate) {
-                onLeagueUpdate();
+
+            // Leave immediately so UI does not keep a stale "current league".
+            if (typeof onLeagueDeleted === 'function') {
+                onLeagueDeleted();
+            } else if (onLeagueUpdate) {
+                onLeagueUpdate({ deleted: true, id: currentLeague.id });
             }
         } catch (error) {
             console.error("Error deleting league:", error);
-            showMessage("Failed to delete league.", "error");
+            showMessage(error?.message || "Failed to delete league.", "error");
         } finally {
             setIsLoading(false);
         }

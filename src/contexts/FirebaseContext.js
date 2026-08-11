@@ -9,12 +9,15 @@ const loadUserProfile = async (firestoreDb, user) => {
     if (docSnap.exists) {
         const data = docSnap.data();
         return {
-            displayName: data.username || user.email || user.uid.substring(0, 6),
+            displayName: data.username || user.email || user.phoneNumber || user.uid.substring(0, 6),
             avatarUrl: data.avatarUrl || null,
         };
     }
-    const displayName = user.email?.split('@')[0] || user.uid.substring(0, 6);
-    await userProfileDocRef.set({ username: displayName }, { merge: true });
+    const displayName = user.email?.split('@')[0] || user.phoneNumber || user.uid.substring(0, 6);
+    const seed = { username: displayName };
+    if (user.phoneNumber) seed.phoneNumber = user.phoneNumber;
+    if (user.email) seed.email = user.email;
+    await userProfileDocRef.set(seed, { merge: true });
     return { displayName, avatarUrl: null };
 };
 
@@ -38,7 +41,7 @@ export const FirebaseProvider = ({ children }) => {
         }
 
         setUserId(user.uid);
-        setUserDisplayName(user.email?.split('@')[0] || user.uid.substring(0, 6));
+        setUserDisplayName(user.email?.split('@')[0] || user.phoneNumber || user.uid.substring(0, 6));
         setUserAvatarUrl(null);
 
         try {
@@ -50,7 +53,7 @@ export const FirebaseProvider = ({ children }) => {
             setUserAvatarUrl(profile.avatarUrl);
         } catch (profileError) {
             console.warn('Could not load user profile, using defaults:', profileError);
-            setUserDisplayName(user.email?.split('@')[0] || user.uid.substring(0, 6));
+            setUserDisplayName(user.email?.split('@')[0] || user.phoneNumber || user.uid.substring(0, 6));
             setUserAvatarUrl(null);
         }
     }, []);

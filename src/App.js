@@ -455,7 +455,7 @@ const App = () => {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen gap-4">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
-                <p className="text-gray-400">Loading Fantasy Dynasty Central...</p>
+                <p className="text-gray-400">Loading FANTASY DYNASTY LEAGUES...</p>
             </div>
         );
     }
@@ -495,11 +495,11 @@ const App = () => {
     
     return (
         <div className="min-h-screen min-h-[100dvh] text-gray-100 p-3 sm:p-6 lg:p-8 mobile-safe-top overflow-x-hidden">
-            <header className="bg-emerald-950 p-3 sm:p-4 rounded-lg shadow-md mb-4 sm:mb-8 flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-3">
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-red-700 text-center leading-tight">
-                    Dynasty League Central
+            <header className="bg-emerald-950 p-3 sm:p-4 rounded-lg shadow-md mb-4 sm:mb-8 flex flex-col items-center text-center gap-3 relative sm:min-h-[4.5rem] sm:flex-row sm:justify-end">
+                <h1 className="app-brand-title text-2xl sm:text-3xl lg:text-4xl font-extrabold leading-tight sm:absolute sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-auto sm:pointer-events-none">
+                    FANTASY DYNASTY LEAGUES
                 </h1>
-                <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-center">
+                <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-center relative z-10">
                     <div className="text-center sm:text-right">
                         <span className="text-emerald-300 text-sm">Welcome,</span>
                         <p className="font-bold text-purple-300 truncate max-w-[10rem] sm:max-w-none">
@@ -654,7 +654,12 @@ const App = () => {
                                     currentTeam={currentTeam}
                                     allPlayers={allPlayers}
                                     showMessage={showMessage}
+                                    onLeagueDeleted={handleLeaveLeague}
                                     onLeagueUpdate={(updatedLeague) => {
+                                        if (updatedLeague?.deleted) {
+                                            handleLeaveLeague();
+                                            return;
+                                        }
                                         if (updatedLeague?.id) {
                                             setCurrentLeague(updatedLeague);
                                         }

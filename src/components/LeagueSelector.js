@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
-import { appId } from '../config/firebase.js';
 import {
     buildInitialLineup,
     buildStartingSlots,
@@ -29,36 +28,76 @@ export const LeagueSelector = ({
     const [isCreatingLeague, setIsCreatingLeague] = useState(false);
 
     useEffect(() => {
+        // Use the authenticated compat Firestore from context (modular Auth is a
+        // separate app instance and may not share the signed-in user).
         if (!db || !userId) return;
 
-        // memberIds query satisfies security rules; then keep only leagues where you still own a team
-        // (matches prior UX and hides leftover league docs with no teams)
+        // Membership is on leagues/{id}.memberIds. Only show leagues that still
+        // exist, have a name, AND where this user owns a real team (ownerId).
+        // Generation counter prevents stale async snapshot handlers from
+        // re-applying a deleted league after a newer snapshot already cleaned it.
+        let cancelled = false;
+        let requestId = 0;
+
         const unsubscribe = db.collection('leagues')
             .where('memberIds', 'array-contains', userId)
             .limit(50)
             .onSnapshot(async (leagueSnapshot) => {
+                const myRequest = ++requestId;
                 const userLeaguesData = [];
+                const hollowLeagueIds = [];
 
                 for (const leagueDoc of leagueSnapshot.docs) {
+                    if (!leagueDoc.exists || !leagueDoc.id) continue;
+                    const leagueData = leagueDoc.data() || {};
+                    if (!leagueData.name) continue;
+
                     try {
                         const teamsSnapshot = await db.collection(`leagues/${leagueDoc.id}/teams`)
                             .where('ownerId', '==', userId)
                             .limit(1)
                             .get();
+
+                        if (cancelled || myRequest !== requestId) return;
+
                         if (!teamsSnapshot.empty) {
-                            userLeaguesData.push({ id: leagueDoc.id, ...leagueDoc.data() });
+                            userLeaguesData.push({
+                                id: leagueDoc.id,
+                                teamId: teamsSnapshot.docs[0].id,
+                                ...leagueData,
+                            });
+                        } else {
+                            // Hollow shell: still in memberIds but no owned team.
+                            hollowLeagueIds.push(leagueDoc.id);
                         }
                     } catch (err) {
                         console.warn('Error checking teams for league', leagueDoc.id, err);
                     }
                 }
 
+                if (cancelled || myRequest !== requestId) return;
                 setUserLeagues(userLeaguesData);
+
+                // Self-heal: drop membership so the query stops returning ghosts.
+                for (const hollowId of hollowLeagueIds) {
+                    try {
+                        await db.doc(`leagues/${hollowId}`).update({
+                            memberIds: firebase.firestore.FieldValue.arrayRemove(userId),
+                            members: firebase.firestore.FieldValue.arrayRemove(userId),
+                        });
+                    } catch (healErr) {
+                        console.warn('Could not self-heal membership for', hollowId, healErr);
+                    }
+                }
             }, (error) => {
                 console.error("Error fetching user's leagues:", error);
                 showMessage("Error fetching your leagues.", "error");
             });
-        return () => unsubscribe();
+
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
     }, [db, userId]);
 
     const handleJoinLeague = async (leagueIdToJoin) => {
@@ -112,7 +151,21 @@ export const LeagueSelector = ({
                                     <p className="font-semibold truncate text-white">{league.name}</p>
                                     <p className="text-xs text-emerald-300 truncate">ID: {league.id}</p>
                                 </div>
-                                <button onClick={() => handleJoinLeague(league.id)} className="px-4 py-2 bg-purple-800 hover:bg-purple-900 font-semibold rounded-md flex-shrink-0">Enter</button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        // Enter with the verified team — never re-join,
+                                        // which would revive a hollow league shell.
+                                        if (league.teamId) {
+                                            onLeagueSelected(league.id, league.teamId);
+                                        } else {
+                                            handleJoinLeague(league.id);
+                                        }
+                                    }}
+                                    className="px-4 py-2 bg-purple-800 hover:bg-purple-900 font-semibold rounded-md flex-shrink-0"
+                                >
+                                    Enter
+                                </button>
                             </li>
                         ))}
                     </ul>

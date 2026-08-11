@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useFirebase } from '../contexts/FirebaseContext.js';
 import { appId } from '../config/firebase.js';
+import { normalizePhoneToE164, PHONE_FORMAT_HINT } from '../utils/phoneE164.js';
+import { clearPhoneRecaptcha, createPhoneRecaptchaVerifier } from '../utils/phoneRecaptcha.js';
 
 const firebase = window.firebase;
 
@@ -22,7 +24,7 @@ const friendlyLinkError = (error) => {
         case 'auth/weak-password':
             return 'Password must be at least 6 characters.';
         case 'auth/invalid-phone-number':
-            return 'Please enter a valid phone number (include country code, e.g. +15551234567).';
+            return `That does not look like a valid phone number. ${PHONE_FORMAT_HINT}`;
         case 'auth/invalid-verification-code':
             return 'Invalid verification code. Check the SMS and try again.';
         case 'auth/code-expired':
@@ -30,9 +32,13 @@ const friendlyLinkError = (error) => {
         case 'auth/too-many-requests':
             return 'Too many attempts. Wait a minute and try again.';
         case 'auth/operation-not-allowed':
-            return 'This sign-in method is not enabled for this project.';
+            return 'Phone sign-in is not enabled for this project. Enable Phone in Firebase Console → Authentication → Sign-in method.';
+        case 'auth/admin-restricted-operation':
+            return 'Phone SMS is restricted for this region. In Firebase Console → Authentication → Settings, allow SMS for your country (e.g. United States).';
         case 'auth/captcha-check-failed':
-            return 'reCAPTCHA verification failed. Refresh and try again.';
+            return 'reCAPTCHA failed. Complete the checkbox, turn off ad blockers, and confirm this site is listed under Firebase Console → Authentication → Settings → Authorized domains.';
+        case 'auth/invalid-app-credential':
+            return 'Phone auth is blocked for this domain. Add it under Firebase Console → Authentication → Settings → Authorized domains.';
         case 'auth/missing-verification-code':
             return 'Enter the 6-digit code from your SMS.';
         default:
@@ -67,7 +73,6 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
     const [isSendingCode, setIsSendingCode] = useState(false);
     const [isLinkingPhone, setIsLinkingPhone] = useState(false);
 
-    const recaptchaContainerRef = useRef(null);
     const recaptchaVerifierRef = useRef(null);
 
     const refreshProviders = useCallback(() => {
@@ -80,14 +85,8 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
 
     useEffect(() => {
         return () => {
-            if (recaptchaVerifierRef.current) {
-                try {
-                    recaptchaVerifierRef.current.clear();
-                } catch (_) {
-                    // ignore cleanup errors
-                }
-                recaptchaVerifierRef.current = null;
-            }
+            clearPhoneRecaptcha(recaptchaVerifierRef.current);
+            recaptchaVerifierRef.current = null;
         };
     }, []);
 
@@ -97,24 +96,22 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
         await profileRef.set(updates, { merge: true });
     };
 
-    const ensureRecaptcha = () => {
+    const ensureRecaptcha = async () => {
         if (!auth || !firebase) {
             throw new Error('Firebase Auth is not ready.');
         }
         if (recaptchaVerifierRef.current) {
             return recaptchaVerifierRef.current;
         }
-        if (!recaptchaContainerRef.current) {
-            throw new Error('reCAPTCHA container is missing.');
-        }
-
-        recaptchaVerifierRef.current = new firebase.auth.RecaptchaVerifier(recaptchaContainerRef.current, {
-            size: 'invisible',
-            callback: () => {},
-            'expired-callback': () => {
-                showMessage('reCAPTCHA expired. Try sending the code again.', 'error');
-            },
-        });
+        recaptchaVerifierRef.current = await createPhoneRecaptchaVerifier(
+            firebase,
+            'account-settings-recaptcha',
+            {
+                onExpired: () => {
+                    showMessage('reCAPTCHA expired. Check the box again, then resend the code.', 'error');
+                },
+            }
+        );
         return recaptchaVerifierRef.current;
     };
 
@@ -154,30 +151,33 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
         if (!user) {
             return showMessage('You must be signed in to link a phone number.', 'error');
         }
-        const phone = phoneNumber.trim();
-        if (!phone) {
-            return showMessage('Enter a phone number with country code (e.g. +15551234567).', 'error');
+        const normalized = normalizePhoneToE164(phoneNumber);
+        if (!normalized.ok) {
+            return showMessage(
+                normalized.reason === 'empty'
+                    ? `Enter a phone number. ${PHONE_FORMAT_HINT}`
+                    : `Please enter a valid phone number. ${PHONE_FORMAT_HINT}`,
+                'error'
+            );
+        }
+        const phone = normalized.e164;
+        if (phone !== phoneNumber.trim()) {
+            setPhoneNumber(phone);
         }
 
         setIsSendingCode(true);
         setVerificationId(null);
         setSmsCode('');
         try {
-            const appVerifier = ensureRecaptcha();
+            const appVerifier = await ensureRecaptcha();
             // Sends SMS while keeping the current session; we link via credential (do not confirm()).
             const confirmationResult = await auth.signInWithPhoneNumber(phone, appVerifier);
             setVerificationId(confirmationResult.verificationId);
             showMessage('Verification code sent. Enter the 6-digit SMS code below.', 'success');
         } catch (error) {
             console.error('Error sending phone code:', error);
-            if (recaptchaVerifierRef.current) {
-                try {
-                    recaptchaVerifierRef.current.clear();
-                } catch (_) {
-                    // ignore
-                }
-                recaptchaVerifierRef.current = null;
-            }
+            clearPhoneRecaptcha(recaptchaVerifierRef.current);
+            recaptchaVerifierRef.current = null;
             showMessage(friendlyLinkError(error), 'error');
         } finally {
             setIsSendingCode(false);
@@ -201,7 +201,10 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
         try {
             const credential = firebase.auth.PhoneAuthProvider.credential(verificationId, smsCode.trim());
             await user.linkWithCredential(credential);
-            const linkedPhone = auth.currentUser?.phoneNumber || phoneNumber.trim();
+            const normalized = normalizePhoneToE164(phoneNumber);
+            const linkedPhone =
+                auth.currentUser?.phoneNumber ||
+                (normalized.ok ? normalized.e164 : phoneNumber.trim());
             await updateProfileDoc({ phoneNumber: linkedPhone });
             refreshProviders();
             setPhoneNumber('');
@@ -296,7 +299,7 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
                     <div className="border-t border-emerald-700 pt-6">
                         <h3 className="text-lg font-semibold text-purple-300 mb-3">Link Phone Number</h3>
                         <p className="text-sm text-emerald-400 mb-4">
-                            Use E.164 format with country code (example: +15551234567).
+                            {PHONE_FORMAT_HINT}
                         </p>
 
                         <form onSubmit={handleSendPhoneCode} className="mb-4">
@@ -307,7 +310,7 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
                                     value={phoneNumber}
                                     onChange={(e) => setPhoneNumber(e.target.value)}
                                     className={inputClass}
-                                    placeholder="+15551234567"
+                                    placeholder="(555) 123-4567"
                                     autoComplete="tel"
                                     required
                                 />
@@ -339,8 +342,8 @@ export const AccountSettings = ({ showMessage, embedded = false }) => {
                             </form>
                         )}
 
-                        {/* Invisible reCAPTCHA mounts here */}
-                        <div ref={recaptchaContainerRef} id="account-settings-recaptcha" />
+                        <p className="text-xs text-emerald-300/80">Check the box below, then send the code.</p>
+                        <div id="account-settings-recaptcha" className="flex justify-center min-h-[78px]" />
                     </div>
                 )}
 

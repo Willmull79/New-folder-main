@@ -127,6 +127,10 @@
         "function": "billingApi"
       },
       {
+        "source": "/api/leagues/delete",
+        "function": "deleteLeagueApi"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

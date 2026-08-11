@@ -23,6 +23,7 @@ const { runSleeperPlayerSync } = require('./sleeperSyncRunner.js');
 const { runProjectionScrape } = require('./projectionScrapeRunner.js');
 const { finalizeAllLeagueStandings } = require('./scoringEngine.js');
 const { billingApi, stripeWebhook } = require('./stripeBilling.js');
+const { deleteLeagueApi } = require('./deleteLeague.js');
 
 // Sleeper NFL player sync — Mon–Sat 6 AM ET + Sunday 10 AM ET (America/New_York)
 exports.fetchAndStoreSleeperDataWeekday = fetchAndStoreSleeperDataWeekday;
@@ -31,6 +32,9 @@ exports.fetchAndStoreSleeperDataSunday = fetchAndStoreSleeperDataSunday;
 // Platform billing (Stripe Checkout + Customer Portal + webhooks)
 exports.billingApi = billingApi;
 exports.stripeWebhook = stripeWebhook;
+
+// Authoritative league delete (Admin recursiveDelete)
+exports.deleteLeagueApi = deleteLeagueApi;
 
 // CORS configuration
 const cors = require('cors')({

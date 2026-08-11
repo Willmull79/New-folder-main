@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --brand-panthers-blue: #0085CA;
+  --brand-burnt-orange: #CC5500; /* legacy; brand titles use --brand-panthers-blue */
+}
+
 /* Remap purple utilities to burnt orange app-wide */
 @theme {
   --color-purple-50: #fff6ef;
@@ -15,6 +20,26 @@
   --color-purple-950: #4a1f00;
 }
 
+/* Primary app brand title (header) — sizes are 1.2× Tailwind text-2xl / sm:text-3xl / lg:text-4xl */
+.app-brand-title {
+  color: var(--brand-panthers-blue);
+  text-align: center;
+  width: 100%;
+  font-size: 1.8rem; /* was 1.5rem (text-2xl) */
+}
+
+@media (min-width: 640px) {
+  .app-brand-title {
+    font-size: 2.25rem; /* was 1.875rem (text-3xl) */
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-brand-title {
+    font-size: 2.7rem; /* was 2.25rem (text-4xl) */
+  }
+}
+
 /* Custom styles for the fantasy football app */
 html {
   -webkit-text-size-adjust: 100%;
@@ -22,17 +47,21 @@ html {
 }
 
 body {
-  background-color: #111827; /* gray-900 - dark background */
+  background-color: #141414; /* charcoal app background */
   color: white;
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
 }
 
 #root {
-  background-color: #111827; /* gray-900 - dark background */
+  background-color: #141414; /* charcoal app background */
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
+}
+
+.app-shell-bg {
+  background-color: #141414;
 }
 
 /* Minimum touch target size for mobile (44x44px) */
@@ -141,5 +170,274 @@ select:focus {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+/* —— Public landing (Stripe website verification) —— */
+.landing-root {
+  font-family: 'Figtree', system-ui, sans-serif;
+  color: #e8f0ea;
+  background:
+    radial-gradient(ellipse 90% 60% at 70% 10%, rgba(204, 85, 0, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 10% 80%, rgba(16, 85, 55, 0.45), transparent 50%),
+    linear-gradient(165deg, #03150f 0%, #06241a 42%, #0a1f16 100%);
+}
+
+.landing-display {
+  font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.landing-muted {
+  color: #9bb5a3;
+}
+
+.landing-link {
+  color: #7dba8e;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  transition: color 0.2s ease;
+}
+
+.landing-link:hover {
+  color: #c5e6cf;
+}
+
+.landing-hero {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.landing-hero-visual {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to top, #03150f 12%, rgba(3, 21, 15, 0.55) 42%, rgba(3, 21, 15, 0.25) 70%),
+    linear-gradient(115deg, rgba(4, 30, 22, 0.85), transparent 50%),
+    url('https://images.unsplash.com/photo-1566577739112-5180d4bf9390?auto=format&fit=crop&w=2000&q=80') center / cover no-repeat;
+  animation: landing-kenburns 18s ease-in-out infinite alternate;
+}
+
+.landing-hero-content {
+  position: relative;
+  z-index: 1;
+  padding: 0 1.25rem 4.5rem;
+  max-width: 42rem;
+  margin-inline: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+@media (min-width: 640px) {
+  .landing-hero-content {
+    padding: 0 2.5rem 5.5rem;
+  }
+}
+
+.landing-brand {
+  font-size: clamp(3.3rem, 12vw, 6.6rem); /* was clamp(2.75rem, 10vw, 5.5rem) */
+  line-height: 0.95;
+  color: var(--brand-panthers-blue);
+  margin: 0 0 1rem;
+  text-align: center;
+}
+
+.landing-headline {
+  font-size: clamp(1.05rem, 2.5vw, 1.25rem);
+  font-weight: 500;
+  color: #d7e8dc;
+  max-width: 36rem;
+  margin: 0 auto 0.75rem;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: 'Figtree', system-ui, sans-serif;
+  text-align: center;
+}
+
+.landing-subcopy {
+  font-size: clamp(0.9rem, 2vw, 1rem);
+  color: #9bb5a3;
+  max-width: 32rem;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.landing-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.landing-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.875rem 1.75rem;
+  border-radius: 0.375rem;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.landing-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.landing-cta-primary {
+  background: #cc5500;
+  color: #fff;
+}
+
+.landing-cta-primary:hover {
+  background: #a84600;
+}
+
+.landing-cta-secondary {
+  background: transparent;
+  color: #c5e6cf;
+  border: 1px solid #2f5a43;
+}
+
+.landing-cta-secondary:hover {
+  background: #0c2a1e;
+}
+
+.landing-cta-alt {
+  background: #1a6b45;
+  color: #fff;
+}
+
+.landing-cta-alt:hover {
+  background: #155538;
+}
+
+.landing-pricing {
+  padding: 4rem 1.25rem;
+  border-top: 1px solid #1e3d2f;
+  background: #04140f;
+  animation: landing-fade-up 0.7s ease-out both;
+}
+
+@media (min-width: 640px) {
+  .landing-pricing {
+    padding: 5rem 1.25rem;
+  }
+}
+
+.landing-pricing-inner {
+  max-width: 48rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.landing-pricing-title {
+  font-size: clamp(1.75rem, 4vw, 2.25rem);
+  color: #fff;
+  margin: 0 0 1rem;
+}
+
+.landing-pricing-lead {
+  font-size: clamp(1.1rem, 2.5vw, 1.25rem);
+  color: #d7e8dc;
+  margin: 0 0 0.75rem;
+}
+
+.landing-pricing-detail {
+  color: #8aa896;
+  font-size: 0.95rem;
+  max-width: 36rem;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+
+.landing-footer {
+  border-top: 1px solid #1e3d2f;
+  background: #04140f;
+  padding: 2.5rem 1.25rem;
+}
+
+.landing-footer-compact {
+  padding: 1.5rem 1.25rem;
+}
+
+.landing-footer-inner {
+  max-width: 64rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  color: #8aa896;
+}
+
+@media (min-width: 640px) {
+  .landing-footer-inner {
+    flex-direction: row;
+  }
+}
+
+.landing-footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem 1.5rem;
+}
+
+.landing-footer-brand {
+  color: var(--brand-panthers-blue);
+  margin: 0;
+  text-align: center;
+}
+
+.landing-fade-up {
+  animation: landing-fade-up 0.85s ease-out both;
+}
+
+.landing-fade-up-delay {
+  animation: landing-fade-up 0.85s ease-out 0.18s both;
+}
+
+.landing-fade-up-delay-2 {
+  animation: landing-fade-up 0.85s ease-out 0.36s both;
+}
+
+@keyframes landing-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.06);
   }
 } 

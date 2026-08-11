@@ -65,13 +65,38 @@ service cloud.firestore {
       return ['teams', 'memberIds', 'members'].toSet();
     }
 
+    // Authenticated user adds only themselves to memberIds/members and one team id.
     function isSelfJoin() {
       return isSignedIn()
         && changedKeys().hasOnly(leagueJoinKeys())
         && request.auth.uid in request.resource.data.get('memberIds', [])
         && !(request.auth.uid in resource.data.get('memberIds', []))
+        && request.resource.data.get('memberIds', []).size()
+          == resource.data.get('memberIds', []).size() + 1
+        && request.auth.uid in request.resource.data.get('members', [])
+        && !(request.auth.uid in resource.data.get('members', []))
+        && request.resource.data.get('members', []).size()
+          == resource.data.get('members', []).size() + 1
         && request.resource.data.get('teams', []).size()
           == resource.data.get('teams', []).size() + 1;
+    }
+
+    // Allow a member to drop only themselves from memberIds/members (self-heal ghosts).
+    function isSelfLeave() {
+      return isSignedIn()
+        && changedKeys().hasOnly(['memberIds', 'members'].toSet())
+        && request.auth.uid in resource.data.get('memberIds', [])
+        && !(request.auth.uid in request.resource.data.get('memberIds', []))
+        && request.resource.data.get('memberIds', []).size()
+          == resource.data.get('memberIds', []).size() - 1
+        && (
+          !(request.auth.uid in resource.data.get('members', []))
+          || (
+            !(request.auth.uid in request.resource.data.get('members', []))
+            && request.resource.data.get('members', []).size()
+              == resource.data.get('members', []).size() - 1
+          )
+        );
     }
 
     function profileClientKeys() {
@@ -168,6 +193,7 @@ service cloud.firestore {
         isCommissioner(leagueId)
         || (isLeagueMember(leagueId) && changedKeys().hasOnly(leagueGameplayKeys()))
         || isSelfJoin()
+        || isSelfLeave()
       );
 
       allow delete: if isPrimaryCommissioner(leagueId);
@@ -176,7 +202,14 @@ service cloud.firestore {
         allow get: if isSignedIn() && (
           isLeagueMember(leagueId) || resource.data.ownerId == request.auth.uid
         );
-        allow list: if isLeagueMember(leagueId) && hasSafeQueryLimit();
+        // Members may list all teams. Non-members may only query their own
+        // (join flow: where('ownerId','==',uid).limit(1) before self-join).
+        allow list: if isSignedIn()
+          && hasSafeQueryLimit()
+          && (
+            isLeagueMember(leagueId)
+            || resource.data.ownerId == request.auth.uid
+          );
 
         allow create: if isSignedIn()
           && request.resource.data.ownerId == request.auth.uid
