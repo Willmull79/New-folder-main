@@ -68,7 +68,9 @@ export const AppNavigation = ({
     const tabs = showLeagueTabs
         ? [
             ...LEAGUE_TABS,
-            ...(isCommissioner ? [{ id: 'commissioner', label: 'Commissioner', shortLabel: 'Commish' }] : []),
+            ...(isCommissioner
+                ? [{ id: 'commissioner', label: 'Commissioner', shortLabel: 'Commish' }]
+                : [{ id: 'league-settings', label: 'League Settings', shortLabel: 'Settings' }]),
         ]
         : ALWAYS_TABS;
 

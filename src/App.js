@@ -57,6 +57,7 @@ const LiveScores = React.lazy(() => import('./components/LiveScores.js'));
 const CommissionerTools = React.lazy(() => import('./components/CommissionerTools.js').then(module => ({ default: module.CommissionerTools })));
 const AccountProfile = React.lazy(() => import('./components/AccountProfile.js'));
 const LeagueDues = React.lazy(() => import('./components/LeagueDues.js').then(module => ({ default: module.LeagueDues })));
+const LeagueSettingsView = React.lazy(() => import('./components/LeagueSettingsView.js').then(module => ({ default: module.LeagueSettingsView })));
 const LeagueChat = React.lazy(() => import('./components/LeagueChat.js').then(module => ({ default: module.LeagueChat })));
 const DirectMessages = React.lazy(() => import('./components/DirectMessages.js').then(module => ({ default: module.DirectMessages })));
 
@@ -96,6 +97,15 @@ const App = () => {
 
     const isLoadingData = (currentLeagueId && !currentLeague) || (currentTeamId && !currentTeam);
     const isCommissioner = isLeagueCommissioner(currentLeague, userId);
+
+    useEffect(() => {
+        if (!currentLeague) return;
+        if (isCommissioner && activeTab === 'league-settings') {
+            setActiveTab('commissioner');
+        } else if (!isCommissioner && activeTab === 'commissioner') {
+            setActiveTab('league-settings');
+        }
+    }, [currentLeague, isCommissioner, activeTab]);
 
     const showMessage = (msg, type = 'success') => {
         setMessage(msg);
@@ -647,6 +657,9 @@ const App = () => {
                                         </div>
                                     )}
                                 </div>
+                            )}
+                            {activeTab === 'league-settings' && currentLeague && !isCommissioner && (
+                                <LeagueSettingsView currentLeague={currentLeague} />
                             )}
                             {activeTab === 'commissioner' && currentLeague && isCommissioner && (
                                 <CommissionerTools
